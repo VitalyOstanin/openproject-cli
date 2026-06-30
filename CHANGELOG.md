@@ -6,46 +6,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
-### Added
-
-- Automatic retries for idempotent requests (`GET`/`HEAD`/`OPTIONS`/`PUT`/
-  `DELETE`) on transport errors and transient statuses (`429`/`5xx`), honouring
-  `Retry-After` with exponential backoff. Configurable via `--retries` /
-  `OPENPROJECT_RETRIES` (default 3, `0` disables); `POST` is never retried.
-
-### Security
-
-- The client refuses to send the API token to a host other than the configured
-  one (an absolute URL passed to `api` pointing elsewhere is rejected) and warns
-  on stderr when the base URL uses plaintext `http://`.
-
-### Fixed
-
-- `comment create` posted to a non-existent endpoint
-  (`work_packages/{id}/comment`); it now uses `work_packages/{id}/activities`,
-  which the API requires (the old path returned HTTP 404).
-
-### Changed
-
-- Argument parsing moved from `argparse` to Click. As a result, global options
-  (`--url`, `--token`, `--config`, `--timeout`, `--retries`, `--insecure`,
-  `--human`) now work anywhere — before the resource or after the subcommand
-  (e.g. `openproject-cli wp list --human`); a value given after the subcommand
-  overrides one given before it. The command surface, option names, defaults and
-  exit codes are unchanged.
-- CI installs into a virtual environment and runs tools via `uv run`; the
-  previous `uv pip install --system` failed as "externally managed" so lint,
-  type check and tests were skipped. Added `timeout-minutes` to the CI job.
-- The test suite runs via a bare `pytest` invocation again (added `pythonpath`),
-  and a default per-test timeout is enforced via `pytest-timeout`.
-- Build requires `setuptools>=77` for the PEP 639 string `license` field.
-- A bad `timeout` value read from the config file now raises a clear
-  `ConfigError` instead of an unhandled traceback (matching the env-var path).
-- GitHub Actions are pinned by commit SHA (with a version comment). The publish
-  workflow now gates on a green test job, checks the tag matches the project
-  version, and creates a GitHub Release.
-
-## [0.1.0]
+## [0.1.0] - 2026-07-01
 
 Initial release.
 
@@ -68,7 +29,16 @@ Initial release.
 - JSON output by default, `--human` for flat text, `--raw` for unmodified
   payloads.
 - Server-side filtering for work packages and time entries, with
-  assignee/user resolution from `me`, a numeric id, or an exact name.
+  assignee/user resolution from `me`, a numeric id, or an exact name (paginated
+  across all result pages).
+- Global options (`--url`, `--token`, `--config`, `--timeout`, `--retries`,
+  `--insecure`, `--human`) work anywhere — before the resource or after the
+  subcommand (e.g. `openproject-cli wp list --human`); a value given after the
+  subcommand overrides one given before it. (Argument parsing is built on Click.)
+- Automatic retries for idempotent requests (`GET`/`HEAD`/`OPTIONS`/`PUT`/
+  `DELETE`) on transport errors and transient statuses (`429`/`5xx`), honouring
+  `Retry-After` with exponential backoff. Configurable via `--retries` /
+  `OPENPROJECT_RETRIES` (default 3, `0` disables); `POST` is never retried.
 - Streaming attachment download and upload (no full-file buffering in memory).
   Downloads are written via a temporary file and atomically renamed on success
   (no partial files on failure), report the content `sha256`, and accept
@@ -85,3 +55,9 @@ Initial release.
   `/openproject/api/v3/...`, as returned by such instances) is reduced to its
   api-absolute form instead of having the prefix duplicated (which caused 404).
 - Detailed `--help` at the global, resource and action levels.
+
+### Security
+
+- The client refuses to send the API token to a host other than the configured
+  one (an absolute URL passed to `api` pointing elsewhere is rejected) and warns
+  on stderr when the base URL uses plaintext `http://`.
