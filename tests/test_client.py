@@ -1,0 +1,227 @@
+"""Tests for the HTTP client: URL joining, auth, error mapping, streaming."""
+
+import base64
+import io
+
+import httpx
+import pytest
+
+from openproject_cli.errors import ApiError, AuthError, NotFoundError
+from tests.conftest import Router, json_response, make_client
+
+
+@pytest.mark.parametrize(
+    "given",
+    ["work_packages/1", "/work_packages/1", "api/v3/work_packages/1", "/api/v3/work_packages/1"],
+)
+def test_url_join_variants_hit_same_path(given):
+    router = Router().add("GET", "/api/v3/work_packages/1", {"id": 1})
+    client = make_client(router)
+    assert client.get_json(given) == {"id": 1}
+    assert router.last().url.path == "/api/v3/work_packages/1"
+
+
+def test_url_strips_deployment_subpath_from_api_hrefs():
+    # Instances hosted under a sub-path return hrefs like "/openproject/api/v3/...".
+    # The prefix must not be duplicated when such an href is fed back to the client.
+    router = Router().add("GET", "/api/v3/work_packages/schemas/4-1", {"_type": "Schema"})
+    client = make_client(router)
+    client.get_json("/openproject/api/v3/work_packages/schemas/4-1")
+    assert router.last().url.path == "/api/v3/work_packages/schemas/4-1"
+
+
+def test_basic_auth_uses_apikey_username():
+    router = Router().add("GET", "/api/v3/users/me", {"id": 5})
+    client = make_client(router)
+    client.current_user()
+    header = router.last().headers["authorization"]
+    scheme, _, encoded = header.partition(" ")
+    assert scheme == "Basic"
+    assert base64.b64decode(encoded).decode() == "apikey:TKN"
+
+
+def test_401_maps_to_auth_error():
+    router = Router().add("GET", "/api/v3/users/me", {"message": "bad token"}, status=401)
+    client = make_client(router)
+    with pytest.raises(AuthError):
+        client.current_user()
+
+
+def test_404_maps_to_not_found():
+    router = Router().add("GET", "/api/v3/work_packages/9", {"message": "not found"}, status=404)
+    client = make_client(router)
+    with pytest.raises(NotFoundError):
+        client.get_json("work_packages/9")
+
+
+def test_422_includes_validation_details():
+    body = {
+        "message": "Multiple field constraints",
+        "_embedded": {"errors": [{"message": "Subject can't be blank"}]},
+    }
+    router = Router().add("POST", "/api/v3/work_packages", body, status=422)
+    client = make_client(router)
+    with pytest.raises(ApiError) as excinfo:
+        client.request("POST", "work_packages", json_body={})
+    assert excinfo.value.status == 422
+    assert "Subject can't be blank" in str(excinfo.value)
+
+
+def test_resolve_principal_me():
+    router = Router().add("GET", "/api/v3/users/me", {"id": 55})
+    client = make_client(router)
+    assert client.resolve_principal_id("me") == "55"
+
+
+def test_resolve_principal_numeric_is_verbatim():
+    client = make_client(Router())
+    assert client.resolve_principal_id("123") == "123"
+
+
+def test_resolve_principal_by_name():
+    router = Router().add(
+        "GET",
+        "/api/v3/principals",
+        {"_embedded": {"elements": [{"id": 7, "name": "Alice Example"}, {"id": 8, "name": "Bob Example"}]}},
+    )
+    client = make_client(router)
+    assert client.resolve_principal_id("alice example") == "7"  # case-insensitive exact match
+
+
+def test_resolve_principal_not_found():
+    router = Router().add("GET", "/api/v3/principals", {"_embedded": {"elements": []}})
+    client = make_client(router)
+    with pytest.raises(ApiError):
+        client.resolve_principal_id("nobody")
+
+
+def test_resolve_principal_ambiguous():
+    router = Router().add(
+        "GET",
+        "/api/v3/principals",
+        {"_embedded": {"elements": [{"id": 1, "name": "Same"}, {"id": 2, "name": "same"}]}},
+    )
+    client = make_client(router)
+    with pytest.raises(ApiError):
+        client.resolve_principal_id("same")
+
+
+def test_stream_download_writes_chunks():
+    payload = b"binary-content-" * 1000
+    router = Router().add_handler(
+        "GET", "/api/v3/attachments/9/content", lambda _req: httpx.Response(200, content=payload)
+    )
+    client = make_client(router)
+    dest = io.BytesIO()
+    written = client.stream_download("attachments/9/content", dest)
+    assert written == len(payload)
+    assert dest.getvalue() == payload
+
+
+def test_stream_download_error_surfaces_message():
+    router = Router().add("GET", "/api/v3/attachments/9/content", {"message": "gone"}, status=404)
+    client = make_client(router)
+    with pytest.raises(NotFoundError):
+        client.stream_download("attachments/9/content", io.BytesIO())
+
+
+def test_upload_attachment_is_multipart(tmp_path):
+    f = tmp_path / "report.txt"
+    f.write_text("hello")
+
+    captured = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["content_type"] = request.headers["content-type"]
+        captured["body"] = request.content
+        return httpx.Response(201, json={"id": 9, "fileName": "report.txt"})
+
+    router = Router().add_handler("POST", "/api/v3/work_packages/777/attachments", handler)
+    client = make_client(router)
+    result = client.upload_attachment(777, str(f))
+    assert result["id"] == 9
+    assert captured["content_type"].startswith("multipart/form-data")
+    assert b"metadata" in captured["body"]
+    assert b"hello" in captured["body"]
+
+
+def test_delete_sends_content_type_header():
+    # OpenProject returns HTTP 406 for a DELETE without a Content-Type header.
+    router = Router().add("DELETE", "/api/v3/work_packages/9", {}, status=204)
+    client = make_client(router)
+    client.delete("work_packages/9")
+    assert router.last().headers["content-type"] == "application/json"
+
+
+def test_download_to_path_writes_file_and_hashes(tmp_path):
+    import hashlib
+
+    router = Router().add_handler(
+        "GET", "/api/v3/attachments/9/content", lambda _req: httpx.Response(200, content=b"PDFDATA")
+    )
+    client = make_client(router)
+    dest = tmp_path / "out.pdf"
+    result = client.download_to_path("attachments/9/content", str(dest))
+    assert dest.read_bytes() == b"PDFDATA"
+    assert result["bytes"] == 7
+    assert result["sha256"] == hashlib.sha256(b"PDFDATA").hexdigest()
+    # The atomic rename leaves no temporary part file behind.
+    assert [p.name for p in tmp_path.iterdir()] == ["out.pdf"]
+
+
+def test_download_to_path_enforces_max_bytes(tmp_path):
+    from openproject_cli.errors import InputError
+
+    router = Router().add_handler(
+        "GET", "/api/v3/attachments/9/content", lambda _req: httpx.Response(200, content=b"0123456789")
+    )
+    client = make_client(router)
+    dest = tmp_path / "out.bin"
+    with pytest.raises(InputError):
+        client.download_to_path("attachments/9/content", str(dest), max_bytes=4, chunk_size=2)
+    # On failure the destination is untouched and the temp file is cleaned up.
+    assert not dest.exists()
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_user_name_caches_lookups():
+    calls = {"n": 0}
+
+    def handler(_req):
+        calls["n"] += 1
+        return json_response({"id": 7, "name": "Alice Example"})
+
+    router = Router().add_handler("GET", "/api/v3/users/7", handler)
+    client = make_client(router)
+    assert client.user_name(7) == "Alice Example"
+    assert client.user_name(7) == "Alice Example"
+    assert calls["n"] == 1
+
+
+def test_user_name_caches_missing_user():
+    router = Router().add("GET", "/api/v3/users/7", {"message": "not found"}, status=404)
+    client = make_client(router)
+    assert client.user_name(7) is None
+    # A failed lookup is cached, so no second request is made.
+    assert client.user_name(7) is None
+    assert len(router.requests) == 1
+
+
+def test_custom_fields_resolves_names_via_schema():
+    schema = {"_type": "Schema", "customField1": {"name": "Severity"}}
+    router = Router().add("GET", "/api/v3/work_packages/schemas/1-7", schema)
+    client = make_client(router)
+    payload = {
+        "id": 1,
+        "customField1": "High",
+        "_links": {"schema": {"href": "/api/v3/work_packages/schemas/1-7"}},
+    }
+    assert client.custom_fields(payload) == [{"key": "customField1", "name": "Severity", "value": "High"}]
+
+
+def test_custom_fields_empty_makes_no_request():
+    router = Router()
+    client = make_client(router)
+    payload = {"id": 1, "_links": {"schema": {"href": "/api/v3/work_packages/schemas/1-7"}}}
+    assert client.custom_fields(payload) == []
+    assert router.requests == []
