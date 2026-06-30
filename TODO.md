@@ -26,10 +26,10 @@ Detailed per-area reports live in the gitignored `docs/reviews/` directory.
 - [x] **[comment create — real bug]** Fixed: `comment create` now posts to
   `work_packages/{id}/activities` with `{comment: {raw: ...}}` (confirmed against
   the server source v17.4.0). Test updated.
-- [ ] **[release tag]** Deferred by decision: do not create the `v0.1.0` tag yet
-  (tagging triggers a real PyPI publish). Tag separately once PyPI publishing
-  (trusted publishing / token) and the package name are confirmed. The
-  publish-workflow gate below is done.
+- [x] **[release tag]** Done (2026-07-01): tagged `v0.1.0`, which ran the publish
+  workflow (test→build→publish→release, all green). Published to PyPI via trusted
+  publishing (`openproject-cli` 0.1.0, wheel + sdist) and created the GitHub
+  Release with both artifacts.
 - [x] **[CI action versions]** All GitHub Actions pinned by commit SHA with a
   version comment (checkout v7.0.0, setup-uv v8.2.0, upload-artifact v7.0.1,
   download-artifact v8.0.1, gh-action-pypi-publish v1.14.0). Dependabot/Renovate
