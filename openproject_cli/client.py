@@ -35,6 +35,10 @@ USER_AGENT = "openproject-cli"
 IDEMPOTENT_METHODS = {"GET", "HEAD", "OPTIONS", "PUT", "DELETE"}
 # Transient HTTP statuses worth retrying: rate limiting and server-side faults.
 RETRYABLE_STATUS = {429, 500, 502, 503, 504}
+# Default streaming chunk size for downloads/uploads.
+DEFAULT_CHUNK_SIZE = 65536
+# Page size used when walking a whole collection (name resolution).
+COLLECTION_PAGE_SIZE = 200
 
 # OpenProject names custom fields ``customField<N>`` both as scalar payload keys
 # and as ``_links`` entries (for list-valued fields).
@@ -196,7 +200,7 @@ class Client:
 
     # -- streaming transfers (never buffer a whole file in memory) ----------
 
-    def stream_download(self, path: str, dest: BinaryIO, *, chunk_size: int = 65536) -> int:
+    def stream_download(self, path: str, dest: BinaryIO, *, chunk_size: int = DEFAULT_CHUNK_SIZE) -> int:
         """Stream a response body into ``dest`` chunk by chunk; return byte count.
 
         Uses ``httpx.stream`` so the payload is written out as it arrives and is
@@ -221,7 +225,7 @@ class Client:
         path: str,
         dest_path: str,
         *,
-        chunk_size: int = 65536,
+        chunk_size: int = DEFAULT_CHUNK_SIZE,
         max_bytes: int | None = None,
     ) -> dict[str, Any]:
         """Stream a response body to ``dest_path`` via a temp file + atomic rename.
@@ -289,6 +293,29 @@ class Client:
                 "file": (file_name, handle, content_type),
             }
             return self.request("POST", f"work_packages/{work_package_id}/attachments", files=files).json()
+
+    def collect(
+        self, path: str, *, params: dict[str, Any] | None = None, page_size: int = COLLECTION_PAGE_SIZE
+    ) -> list[dict[str, Any]]:
+        """Fetch every element of a paginated collection, walking all pages.
+
+        OpenProject caps a single page (``pageSize``), so resolving a name that
+        falls past the first page needs every page. Stops when the running count
+        reaches the reported ``total`` or a page comes back empty.
+        """
+        page_params = dict(params or {})
+        page_params["pageSize"] = str(page_size)
+        elements: list[dict[str, Any]] = []
+        offset = 1
+        while True:
+            page_params["offset"] = str(offset)
+            payload = self.get_json(path, params=page_params)
+            page = payload.get("_embedded", {}).get("elements", [])
+            elements.extend(page)
+            total = payload.get("total", len(elements))
+            if not page or len(elements) >= total:
+                return elements
+            offset += 1
 
     # -- resolution helpers (shared by commands) ---------------------------
 
@@ -363,8 +390,7 @@ class Client:
         if ref.isdigit():
             return ref
         filters = json.dumps([{"name": {"operator": "~", "values": [ref]}}])
-        payload = self.get_json("principals", params={"filters": filters, "pageSize": "100"})
-        elements = payload.get("_embedded", {}).get("elements", [])
+        elements = self.collect("principals", params={"filters": filters})
         matches = [
             str(item["id"]) for item in elements if (item.get("name") or "").casefold() == ref.casefold()
         ]

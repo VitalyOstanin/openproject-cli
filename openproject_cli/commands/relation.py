@@ -2,13 +2,21 @@
 
 from __future__ import annotations
 
-import argparse
 import json
 from typing import Any
 
+import click
+
 from openproject_cli import normalize, runtime
 from openproject_cli.client import API_PREFIX
-from openproject_cli.commands._args import add_paging, add_raw, paging_params
+from openproject_cli.commands._common import (
+    common_options,
+    emit_result,
+    paging_options,
+    paging_params,
+    raw_option,
+    resolve_globals,
+)
 
 RELATION_TYPES = (
     "relates",
@@ -25,107 +33,129 @@ RELATION_TYPES = (
 )
 
 
-def cmd_list(args: argparse.Namespace) -> Any:
-    client = runtime.client_from_args(args)
-    params = paging_params(args)
-    if args.type:
-        params["filters"] = json.dumps([{"type": {"operator": "=", "values": [args.type]}}])
-    payload = client.get_json(f"work_packages/{args.work_package}/relations", params=params)
+@click.group("relation", short_help="work-package relations: list, get, create, update, delete")
+def relation() -> None:
+    """Create, read, update, delete and list relations between work packages."""
+
+
+@relation.command(
+    "list",
+    short_help="list relations of a work package",
+    epilog="Example: openproject-cli relation list --work-package 1234 --type follows",
+)
+@click.option("--work-package", "work_package", type=int, required=True, help="work package id")
+@click.option("--type", "type_", type=click.Choice(RELATION_TYPES), help="filter by relation type")
+@paging_options
+@raw_option
+@common_options()
+@click.pass_context
+def relation_list(
+    ctx: click.Context,
+    work_package: int,
+    type_: str | None,
+    offset: int,
+    limit: int | None,
+    raw: bool,
+    **_globals: object,
+) -> None:
+    """List relations of a work package, optionally filtered by type."""
+    gopts = resolve_globals(ctx)
+    client = runtime.client_from_args(gopts)
+    params = paging_params(offset, limit)
+    if type_:
+        params["filters"] = json.dumps([{"type": {"operator": "=", "values": [type_]}}])
+    payload = client.get_json(f"work_packages/{work_package}/relations", params=params)
     elements = normalize.collection(payload)
-    if args.raw:
-        return elements
-    return [normalize.relation(item) for item in elements]
+    if raw:
+        emit_result(elements, gopts)
+        return
+    emit_result([normalize.relation(item) for item in elements], gopts)
 
 
-def cmd_get(args: argparse.Namespace) -> Any:
-    client = runtime.client_from_args(args)
-    payload = client.get_json(f"relations/{args.id}")
-    return payload if args.raw else normalize.relation(payload)
+@relation.command("get", short_help="show a single relation")
+@click.argument("relation_id", type=int, metavar="ID")
+@raw_option
+@common_options()
+@click.pass_context
+def relation_get(ctx: click.Context, relation_id: int, raw: bool, **_globals: object) -> None:
+    """Show one relation by id."""
+    gopts = resolve_globals(ctx)
+    client = runtime.client_from_args(gopts)
+    payload = client.get_json(f"relations/{relation_id}")
+    emit_result(payload if raw else normalize.relation(payload), gopts)
 
 
-def cmd_create(args: argparse.Namespace) -> Any:
-    client = runtime.client_from_args(args)
+@relation.command(
+    "create",
+    short_help="create a relation between two work packages",
+    epilog="Example: openproject-cli relation create --work-package 1234 --to 5678 --type follows",
+)
+@click.option("--work-package", "work_package", type=int, required=True, help="source work package id")
+@click.option("--to", type=int, required=True, help="target work package id")
+@click.option("--type", "type_", type=click.Choice(RELATION_TYPES), required=True, help="relation type")
+@click.option("--description", help="optional relation description")
+@raw_option
+@common_options()
+@click.pass_context
+def relation_create(
+    ctx: click.Context,
+    work_package: int,
+    to: int,
+    type_: str,
+    description: str | None,
+    raw: bool,
+    **_globals: object,
+) -> None:
+    """Relate a work package (--work-package) to another (--to) with a given type."""
+    gopts = resolve_globals(ctx)
+    client = runtime.client_from_args(gopts)
     body: dict[str, Any] = {
-        "type": args.type,
-        "_links": {"to": {"href": f"{API_PREFIX}/work_packages/{args.to}"}},
+        "type": type_,
+        "_links": {"to": {"href": f"{API_PREFIX}/work_packages/{to}"}},
     }
-    if args.description is not None:
-        body["description"] = args.description
-    payload = client.request("POST", f"work_packages/{args.work_package}/relations", json_body=body).json()
-    return payload if args.raw else normalize.relation(payload)
+    if description is not None:
+        body["description"] = description
+    payload = client.request("POST", f"work_packages/{work_package}/relations", json_body=body).json()
+    emit_result(payload if raw else normalize.relation(payload), gopts)
 
 
-def cmd_update(args: argparse.Namespace) -> Any:
-    client = runtime.client_from_args(args)
-    current = client.get_json(f"relations/{args.id}")
+@relation.command("update", short_help="update a relation")
+@click.argument("relation_id", type=int, metavar="ID")
+@click.option("--type", "type_", type=click.Choice(RELATION_TYPES), help="new relation type")
+@click.option("--description", help="new relation description")
+@raw_option
+@common_options()
+@click.pass_context
+def relation_update(
+    ctx: click.Context,
+    relation_id: int,
+    type_: str | None,
+    description: str | None,
+    raw: bool,
+    **_globals: object,
+) -> None:
+    """Update a relation's type or description."""
+    gopts = resolve_globals(ctx)
+    client = runtime.client_from_args(gopts)
+    current = client.get_json(f"relations/{relation_id}")
     body: dict[str, Any] = {}
     if current.get("lockVersion") is not None:
         body["lockVersion"] = current["lockVersion"]
-    if args.type is not None:
-        body["type"] = args.type
-    if args.description is not None:
-        body["description"] = args.description
-    payload = client.request("PATCH", f"relations/{args.id}", json_body=body).json()
-    return payload if args.raw else normalize.relation(payload)
+    if type_ is not None:
+        body["type"] = type_
+    if description is not None:
+        body["description"] = description
+    payload = client.request("PATCH", f"relations/{relation_id}", json_body=body).json()
+    emit_result(payload if raw else normalize.relation(payload), gopts)
 
 
-def cmd_delete(args: argparse.Namespace) -> Any:
-    client = runtime.client_from_args(args)
-    client.delete(f"relations/{args.id}")
-    return {"deleted": args.id}
-
-
-def register(subparsers: argparse._SubParsersAction) -> None:
-    parser = subparsers.add_parser(
-        "relation",
-        help="work-package relations: list, get, create, update, delete",
-        description="Create, read, update, delete and list relations between work packages.",
-    )
-    actions = parser.add_subparsers(dest="action", required=True, metavar="<action>")
-
-    p_list = actions.add_parser(
-        "list",
-        help="list relations of a work package",
-        description="List relations of a work package, optionally filtered by type.",
-        epilog="Example: openproject-cli relation list --work-package 1234 --type follows",
-    )
-    p_list.add_argument(
-        "--work-package", dest="work_package", type=int, required=True, help="work package id"
-    )
-    p_list.add_argument("--type", choices=RELATION_TYPES, help="filter by relation type")
-    add_paging(p_list)
-    add_raw(p_list)
-    p_list.set_defaults(func=cmd_list)
-
-    p_get = actions.add_parser("get", help="show a single relation", description="Show one relation by id.")
-    p_get.add_argument("id", type=int, help="relation id")
-    add_raw(p_get)
-    p_get.set_defaults(func=cmd_get)
-
-    p_create = actions.add_parser(
-        "create",
-        help="create a relation between two work packages",
-        description="Relate a work package (--work-package) to another (--to) with a given type.",
-        epilog="Example: openproject-cli relation create --work-package 1234 --to 5678 --type follows",
-    )
-    p_create.add_argument(
-        "--work-package", dest="work_package", type=int, required=True, help="source work package id"
-    )
-    p_create.add_argument("--to", type=int, required=True, help="target work package id")
-    p_create.add_argument("--type", choices=RELATION_TYPES, required=True, help="relation type")
-    p_create.add_argument("--description", help="optional relation description")
-    add_raw(p_create)
-    p_create.set_defaults(func=cmd_create)
-
-    p_update = actions.add_parser(
-        "update", help="update a relation", description="Update a relation's type or description."
-    )
-    p_update.add_argument("id", type=int, help="relation id")
-    p_update.add_argument("--type", choices=RELATION_TYPES, help="new relation type")
-    p_update.add_argument("--description", help="new relation description")
-    add_raw(p_update)
-    p_update.set_defaults(func=cmd_update)
-
-    p_delete = actions.add_parser("delete", help="delete a relation", description="Delete a relation by id.")
-    p_delete.add_argument("id", type=int, help="relation id")
-    p_delete.set_defaults(func=cmd_delete)
+@relation.command("delete", short_help="delete a relation")
+@click.argument("relation_id", type=int, metavar="ID")
+@common_options()
+@click.pass_context
+def relation_delete(ctx: click.Context, relation_id: int, **_globals: object) -> None:
+    """Delete a relation by id."""
+    gopts = resolve_globals(ctx)
+    client = runtime.client_from_args(gopts)
+    client.delete(f"relations/{relation_id}")
+    emit_result({"deleted": relation_id}, gopts)

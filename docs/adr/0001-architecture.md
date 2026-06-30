@@ -4,7 +4,8 @@ Date: 2026-06-30
 
 ## Status
 
-Accepted
+Superseded by [ADR-0002](0002-cli-framework-click.md) (argument parsing moved
+from `argparse` to Click). The rest of this record still stands.
 
 ## Context
 

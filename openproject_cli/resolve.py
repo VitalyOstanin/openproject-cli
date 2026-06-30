@@ -10,7 +10,6 @@ from __future__ import annotations
 
 from openproject_cli.client import Client
 from openproject_cli.errors import ApiError
-from openproject_cli.normalize import collection
 
 
 def project_id(client: Client, ref: str) -> str:
@@ -24,7 +23,7 @@ def _resolve_by_name(client: Client, path: str, ref: str, kind: str) -> str:
     ref = ref.strip()
     if ref.isdigit():
         return ref
-    elements = collection(client.get_json(path, params={"pageSize": "200"}))
+    elements = client.collect(path)
     matches = [str(item["id"]) for item in elements if (item.get("name") or "").casefold() == ref.casefold()]
     if not matches:
         names = ", ".join(sorted(str(item.get("name")) for item in elements))

@@ -227,6 +227,19 @@ def test_custom_fields_empty_makes_no_request():
     assert router.requests == []
 
 
+def test_collect_walks_all_pages():
+    page1 = {"total": 3, "_embedded": {"elements": [{"id": 1}, {"id": 2}]}}
+    page2 = {"total": 3, "_embedded": {"elements": [{"id": 3}]}}
+
+    def handler(req):
+        return json_response(page1 if req.url.params.get("offset") == "1" else page2)
+
+    router = Router().add_handler("GET", "/api/v3/statuses", handler)
+    client = make_client(router)
+    assert [e["id"] for e in client.collect("statuses", page_size=2)] == [1, 2, 3]
+    assert len(router.requests) == 2  # two pages fetched
+
+
 def test_request_retries_idempotent_on_5xx(monkeypatch):
     sleeps: list[float] = []
     monkeypatch.setattr("openproject_cli.client.time.sleep", lambda s: sleeps.append(s))

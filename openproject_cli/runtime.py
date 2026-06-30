@@ -2,14 +2,28 @@
 
 from __future__ import annotations
 
-import argparse
 from pathlib import Path
+from typing import Protocol
 
 from openproject_cli.client import Client
 from openproject_cli.config import Config, resolve_config
 
 
-def config_from_args(args: argparse.Namespace) -> Config:
+class GlobalArgs(Protocol):
+    """Structural type for the resolved global options the helpers below read.
+
+    Both the Click ``GlobalOptions`` object and any test double satisfy it.
+    """
+
+    url: str | None
+    token: str | None
+    timeout: float | None
+    retries: int | None
+    insecure: bool | None
+    config: str | None
+
+
+def config_from_args(args: GlobalArgs) -> Config:
     return resolve_config(
         url=args.url,
         token=args.token,
@@ -20,6 +34,6 @@ def config_from_args(args: argparse.Namespace) -> Config:
     )
 
 
-def client_from_args(args: argparse.Namespace) -> Client:
+def client_from_args(args: GlobalArgs) -> Client:
     """Build a validated API client from global CLI options."""
     return Client(config_from_args(args))

@@ -9,8 +9,19 @@ row per item. Nested structures fall back to compact JSON inside the cell.
 from __future__ import annotations
 
 import json
+import os
 import sys
 from typing import Any, TextIO
+
+
+def silence_broken_pipe() -> None:
+    """Redirect stdout to /dev/null so the interpreter shutdown flush is silent.
+
+    Called after a downstream reader closed the pipe (e.g. ``| head``): the
+    remaining buffered output is discarded instead of raising again at exit.
+    """
+    devnull = os.open(os.devnull, os.O_WRONLY)
+    os.dup2(devnull, sys.stdout.fileno())
 
 
 def emit(data: Any, *, human: bool = False, stream: TextIO | None = None) -> None:

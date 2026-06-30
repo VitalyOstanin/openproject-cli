@@ -14,9 +14,8 @@ Detailed per-area reports live in the gitignored `docs/reviews/` directory.
 ## Critical
 
 - [x] **[CI install]** Switched to `uv venv` + `uv pip install -e ".[dev]"` and
-  run tools via `uv run` (`.github/workflows/ci.yml`). Verify the next CI run is
-  green (the externally-managed failure is fixed locally but only a real run
-  confirms it end to end).
+  run tools via `uv run` (`.github/workflows/ci.yml`). Confirmed green on a real
+  run (28478223332, success) after the previous run failed.
 - [x] **[pytest invocation]** Added `pythonpath = ["."]` to the pytest config; a
   bare `pytest` now runs (86 passed) without `python -m`.
 - [x] **[test timeout]** Added `pytest-timeout` with `--timeout=60` in addopts and
@@ -38,10 +37,10 @@ Detailed per-area reports live in the gitignored `docs/reviews/` directory.
 - [x] **[retry/backoff]** Added bounded retry with exponential backoff and
   `Retry-After` for idempotent methods on 429/5xx; configurable via `--retries` /
   `OPENPROJECT_RETRIES` (default 3, 0 disables); POST never retried.
-- [ ] **[global options placement]** Global options (`--human`, `--url`, `--token`,
-  ...) are only accepted before the resource name; after a subcommand argparse
-  reports `unrecognized arguments` with no hint. Deferred to the Click migration
-  (Click handles this from the box).
+- [x] **[global options placement]** Done via the Click migration: global options
+  (`--url`/`--token`/`--config`/`--timeout`/`--retries`/`--insecure`/`--human`)
+  are attached to the group and every leaf, so they work before the resource or
+  after the subcommand (a later value overrides an earlier one). See ADR 0002.
 
 ## Minor
 
@@ -51,35 +50,35 @@ Detailed per-area reports live in the gitignored `docs/reviews/` directory.
 - [x] **[security hardening]** `Client._url` now refuses an absolute URL whose
   host differs from the configured one (blocks token exfiltration), and the
   client warns on stderr when the base URL is plaintext `http://`.
-- [ ] **[SIGTERM cleanup]** SIGTERM during `attachment download` leaves a temp
-  `.part` file (SIGINT is handled correctly). Install a SIGTERM handler that cleans
-  up.
-- [ ] **[timeout literal]** The `30.0` timeout default is duplicated as a literal in
-  `auth.py` instead of reusing `DEFAULT_TIMEOUT` from `config.py`.
+- [x] **[SIGTERM cleanup]** `main()` installs a SIGTERM handler that raises
+  `SystemExit`, so `download_to_path`'s `BaseException` cleanup removes the temp
+  `.part` file on termination.
+- [x] **[timeout literal]** `auth.py` now uses `DEFAULT_TIMEOUT` instead of the
+  duplicated `30.0` literal.
 - [x] **[config-file timeout]** A bad `timeout` (and `retries`) from the config
   file is now wrapped in `ConfigError`, matching the env-var path.
-- [ ] **[name resolution paging]** Name resolution reads only one collection page
-  (`pageSize` 100/200, no paging) in `resolve.py`/`client.py`; a name past the first
-  page is not found.
-- [ ] **[client typing]** The `client` parameter is untyped in command helpers
-  (typed in `resolve.py`); annotate it consistently.
-- [ ] **[chunk size]** The `chunk_size 65536` magic number is repeated in two
-  `client.py` signatures; extract a constant.
-- [ ] **[coverage]** Coverage is configured (`pytest-cov`) but not collected in CI
-  and has no threshold. Add `--cov` in CI and a `--cov-fail-under`.
+- [x] **[name resolution paging]** Added `Client.collect()`, which walks all
+  collection pages; `resolve.py` and `resolve_principal_id` use it, so a name past
+  the first page is now found.
+- [x] **[client typing]** The `client` parameter is annotated `Client` across the
+  command helpers (done in the Click migration).
+- [x] **[chunk size]** Extracted `DEFAULT_CHUNK_SIZE` in `client.py`, used by both
+  streaming signatures.
+- [x] **[coverage]** CI runs `pytest --cov --cov-report=term-missing
+  --cov-fail-under=75` (current coverage ~79%).
 - [x] **[setuptools floor]** Bumped `build-system requires` to `setuptools>=77`
   for the PEP 639 string `license` form.
 
 ## Documentation
 
-- [ ] Add status badges to `README.md`: CI status, PyPI version, supported Python
-  versions, license.
+- [x] Added status badges to `README.md` (CI, PyPI version, Python versions,
+  license).
 - [x] Documented env vars (`OPENPROJECT_TIMEOUT`, `OPENPROJECT_RETRIES`,
   `OPENPROJECT_INSECURE`, `OPENPROJECT_URL`, `OPENPROJECT_CONFIG`) in a README
   table, plus the retries and transport-safety behaviour.
 - [x] README "Development" now lists `ruff format --check .`.
-- [ ] Note that `--max-bytes`/sha256/atomic write apply only to file downloads (not
-  the `-` stdout stream); document `auth status --offline`.
+- [x] README notes that `--max-bytes`/sha256/atomic write apply only to file
+  downloads (not the `-` stdout stream); documented `auth status --offline`.
 
 ## Verified non-issues
 

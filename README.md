@@ -1,5 +1,10 @@
 # openproject-cli
 
+[![CI](https://github.com/VitalyOstanin/openproject-cli/actions/workflows/ci.yml/badge.svg)](https://github.com/VitalyOstanin/openproject-cli/actions/workflows/ci.yml)
+[![PyPI](https://img.shields.io/pypi/v/openproject-cli.svg)](https://pypi.org/project/openproject-cli/)
+[![Python versions](https://img.shields.io/pypi/pyversions/openproject-cli.svg)](https://pypi.org/project/openproject-cli/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+
 A non-interactive command-line client for the [OpenProject](https://www.openproject.org/)
 API v3, in the spirit of [`gh`](https://cli.github.com/). It is designed to be
 driven by scripts and AI agents: output is JSON by default, credentials come
@@ -79,9 +84,10 @@ openproject-cli auth login --url https://openproject.example.com --with-token < 
 # or pass it directly (less safe; ends up in shell history):
 openproject-cli auth login --url https://openproject.example.com --token YOUR_TOKEN
 
-openproject-cli auth status     # show config and token source, verify against server
-openproject-cli auth token      # print the resolved token
-openproject-cli auth logout     # remove the stored token
+openproject-cli auth status            # show config and token source, verify against server
+openproject-cli auth status --offline  # same, but skip the server round-trip
+openproject-cli auth token             # print the resolved token
+openproject-cli auth logout            # remove the stored token
 ```
 
 By default the token is stored in the **system keyring** (keyed by host URL);
@@ -100,11 +106,16 @@ takes the token you generate there.
 
 ## Usage
 
-Global options go **before** the resource:
+Global options may be given **before the resource or after the subcommand** — a
+value repeated after the subcommand overrides the one before it:
 
 ```
-openproject-cli [--url URL] [--token TOKEN] [--config PATH] [--timeout S] [--retries N] [--insecure] [--human] <resource> <action> [options]
+openproject-cli [GLOBAL OPTIONS] <resource> <action> [options] [GLOBAL OPTIONS]
 ```
+
+where `GLOBAL OPTIONS` are `--url URL`, `--token TOKEN`, `--config PATH`,
+`--timeout S`, `--retries N`, `--insecure` and `--human`. For example, both
+`openproject-cli --human wp list` and `openproject-cli wp list --human` work.
 
 ### Work packages
 
@@ -136,6 +147,11 @@ openproject-cli attachment upload --work-package 1234 ./report.pdf
 openproject-cli attachment download 9876 --output report.pdf   # '-' for stdout
 openproject-cli attachment delete 9876
 ```
+
+When downloading to a file, the content is written via a temporary file and
+atomically renamed on success, the `sha256` is reported, and `--max-bytes` caps
+the transfer. These apply to file output only; `--output -` streams straight to
+stdout without the temp file, hash or size cap.
 
 ### Relations
 

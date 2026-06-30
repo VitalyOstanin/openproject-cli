@@ -27,6 +27,12 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- Argument parsing moved from `argparse` to Click. As a result, global options
+  (`--url`, `--token`, `--config`, `--timeout`, `--retries`, `--insecure`,
+  `--human`) now work anywhere — before the resource or after the subcommand
+  (e.g. `openproject-cli wp list --human`); a value given after the subcommand
+  overrides one given before it. The command surface, option names, defaults and
+  exit codes are unchanged.
 - CI installs into a virtual environment and runs tools via `uv run`; the
   previous `uv pip install --system` failed as "externally managed" so lint,
   type check and tests were skipped. Added `timeout-minutes` to the CI job.

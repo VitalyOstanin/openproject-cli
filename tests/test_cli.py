@@ -146,6 +146,36 @@ def test_human_output(cli_run, router):
     assert "Sample" in out
 
 
+def test_human_output_after_subcommand(cli_run, router):
+    # A global option (--human) given AFTER the subcommand must be accepted and
+    # take effect; argparse used to reject options in this position.
+    router.add(
+        "GET", "/api/v3/work_packages", {"_embedded": {"elements": [{"id": 1234, "subject": "Sample"}]}}
+    )
+    code, out, _ = cli_run(["wp", "list", "--human"])
+    assert code == 0
+    # Human rendering is tab-separated text, not JSON.
+    assert not out.lstrip().startswith("[")
+    assert "\t" in out
+    assert "Sample" in out
+
+
+def test_connection_options_accepted_after_subcommand(cli_run, router):
+    # --url/--token after the subcommand must parse without error (the point of
+    # the Click migration); the mock client ignores them.
+    router.add("GET", "/api/v3/work_packages/1234", {"id": 1234, "subject": "Sample", "_links": {}})
+    code, out, _ = cli_run(["wp", "get", "1234", "--url", "https://op.test", "--token", "X"])
+    assert code == 0
+    assert json.loads(out)["id"] == 1234
+
+
+def test_usage_error_exit_code_is_two(cli_run, router):
+    # Unknown option is a Click usage error -> exit code 2.
+    code, _, err = cli_run(["wp", "get", "1234", "--nope"])
+    assert code == 2
+    assert "No such option" in err or "Error" in err
+
+
 def test_error_sets_exit_code(cli_run, router):
     router.add("GET", "/api/v3/work_packages/9", {"message": "not found"}, status=404)
     code, _, err = cli_run(["wp", "get", "9"])

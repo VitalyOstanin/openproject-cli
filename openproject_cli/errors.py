@@ -28,7 +28,7 @@ class AuthError(OpenProjectCliError):
 
 
 class InputError(OpenProjectCliError):
-    """Invalid command-line input that argparse cannot catch on its own."""
+    """Invalid command-line input that the argument parser cannot catch on its own."""
 
     exit_code = 2
 

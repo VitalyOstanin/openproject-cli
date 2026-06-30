@@ -7,20 +7,30 @@ sends a JSON body read from a file or stdin.
 
 from __future__ import annotations
 
-import argparse
 import json
 import sys
 from typing import Any
 
+import click
+
 from openproject_cli import runtime
+from openproject_cli.commands._common import common_options, emit_result, resolve_globals
 from openproject_cli.errors import InputError
 
 _BODILESS = {"GET", "HEAD", "DELETE"}
 
+_EPILOG = """\
+\b
+Examples:
+  openproject-cli api GET work_packages/1234
+  openproject-cli api GET work_packages -f pageSize=5
+  openproject-cli api POST time_entries --input body.json
+"""
 
-def _parse_fields(raw: list[str] | None, *, typed: bool) -> dict[str, Any]:
+
+def _parse_fields(raw: tuple[str, ...], *, typed: bool) -> dict[str, Any]:
     result: dict[str, Any] = {}
-    for item in raw or []:
+    for item in raw:
         key, sep, value = item.partition("=")
         if not sep:
             raise InputError(f"Invalid field {item!r}; expected key=value.")
@@ -34,22 +44,54 @@ def _parse_fields(raw: list[str] | None, *, typed: bool) -> dict[str, Any]:
     return result
 
 
-def cmd_api(args: argparse.Namespace) -> Any:
-    client = runtime.client_from_args(args)
-    method = args.method.upper()
+@click.command(
+    "api",
+    short_help="make a raw authenticated API request to any endpoint",
+    epilog=_EPILOG,
+)
+@click.argument("method")
+@click.argument("path")
+@click.option("-f", "--field", "field", multiple=True, metavar="KEY=VALUE", help="string field (repeatable)")
+@click.option(
+    "-F",
+    "--raw-field",
+    "raw_field",
+    multiple=True,
+    metavar="KEY=VALUE",
+    help="typed field: value parsed as JSON, falling back to string (repeatable)",
+)
+@click.option("--input", "input_", help="read a JSON request body from a file, or '-' for stdin")
+@common_options()
+@click.pass_context
+def api(
+    ctx: click.Context,
+    method: str,
+    path: str,
+    field: tuple[str, ...],
+    raw_field: tuple[str, ...],
+    input_: str | None,
+    **_globals: object,
+) -> None:
+    """Send an authenticated request to any OpenProject API path.
+
+    The path may be given with or without the /api/v3 prefix.
+    """
+    gopts = resolve_globals(ctx)
+    client = runtime.client_from_args(gopts)
+    method = method.upper()
 
     fields: dict[str, Any] = {}
-    fields.update(_parse_fields(args.field, typed=False))
-    fields.update(_parse_fields(args.raw_field, typed=True))
+    fields.update(_parse_fields(field, typed=False))
+    fields.update(_parse_fields(raw_field, typed=True))
 
     params: dict[str, Any] | None = None
     body: Any | None = None
 
-    if args.input is not None:
-        if args.input == "-":
+    if input_ is not None:
+        if input_ == "-":
             text = sys.stdin.read()
         else:
-            with open(args.input, encoding="utf-8") as handle:
+            with open(input_, encoding="utf-8") as handle:
                 text = handle.read()
         try:
             body = json.loads(text)
@@ -61,43 +103,11 @@ def cmd_api(args: argparse.Namespace) -> Any:
         else:
             body = fields
 
-    response = client.request(method, args.path, params=params, json_body=body)
+    response = client.request(method, path, params=params, json_body=body)
     if response.status_code == 204 or not response.content:
-        return None
+        emit_result(None, gopts)
+        return
     try:
-        return response.json()
+        emit_result(response.json(), gopts)
     except (json.JSONDecodeError, ValueError):
-        return response.text
-
-
-def register(subparsers: argparse._SubParsersAction) -> None:
-    parser = subparsers.add_parser(
-        "api",
-        help="make a raw authenticated API request to any endpoint",
-        description=(
-            "Send an authenticated request to any OpenProject API path. "
-            "The path may be given with or without the /api/v3 prefix."
-        ),
-        epilog=(
-            "Examples:\n"
-            "  openproject-cli api GET work_packages/1234\n"
-            "  openproject-cli api GET work_packages -f pageSize=5\n"
-            "  openproject-cli api POST time_entries --input body.json"
-        ),
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-    )
-    parser.add_argument("method", help="HTTP method (GET, POST, PATCH, DELETE, ...)")
-    parser.add_argument("path", help="API path, e.g. work_packages/1234")
-    parser.add_argument(
-        "-f", "--field", action="append", metavar="KEY=VALUE", help="string field (repeatable)"
-    )
-    parser.add_argument(
-        "-F",
-        "--raw-field",
-        dest="raw_field",
-        action="append",
-        metavar="KEY=VALUE",
-        help="typed field: value parsed as JSON, falling back to string (repeatable)",
-    )
-    parser.add_argument("--input", help="read a JSON request body from a file, or '-' for stdin")
-    parser.set_defaults(func=cmd_api)
+        emit_result(response.text, gopts)

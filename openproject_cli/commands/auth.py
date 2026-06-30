@@ -16,22 +16,27 @@
 
 from __future__ import annotations
 
-import argparse
 import getpass
+import os
 import sys
 import webbrowser
 from pathlib import Path
 from typing import Any
 
+import click
+
 from openproject_cli import secrets
 from openproject_cli.client import Client
+from openproject_cli.commands._common import GlobalOptions, common_options, emit_result, resolve_globals
 from openproject_cli.config import (
+    DEFAULT_TIMEOUT,
     Config,
     default_config_path,
     load_config_file,
     save_config_file,
 )
 from openproject_cli.errors import AuthError, InputError, OpenProjectCliError
+from openproject_cli.output import silence_broken_pipe
 from openproject_cli.runtime import config_from_args
 
 ENV_TOKEN = "OPENPROJECT_TOKEN"
@@ -41,16 +46,16 @@ ENV_TOKEN = "OPENPROJECT_TOKEN"
 ACCESS_TOKEN_PATH = "/my/access_token"
 
 
-def _config_path(args: argparse.Namespace) -> Path:
-    return Path(args.config).expanduser() if args.config else default_config_path()
+def _config_path(config: str | None) -> Path:
+    return Path(config).expanduser() if config else default_config_path()
 
 
-def _resolve_login_url(args: argparse.Namespace) -> str:
-    if args.url:
-        return args.url.rstrip("/")
+def _resolve_login_url(gopts: GlobalOptions) -> str:
+    if gopts.url:
+        return gopts.url.rstrip("/")
     # Reuse a previously configured URL (config file or $OPENPROJECT_URL) so the
     # base URL only needs to be supplied once.
-    configured = config_from_args(args).base_url
+    configured = config_from_args(gopts).base_url
     if configured:
         return configured
     raise InputError("No URL given and none configured. Pass --url <base-url> once.")
@@ -86,69 +91,118 @@ def _prompt_token(url: str, *, no_browser: bool) -> str:
     return token
 
 
-def _resolve_token(args: argparse.Namespace, url: str) -> str:
-    if args.with_token:
+def _resolve_token(gopts: GlobalOptions, url: str, *, with_token: bool, no_browser: bool) -> str:
+    if with_token:
         token = sys.stdin.readline().strip()
         if not token:
             raise InputError("No token received on stdin for --with-token.")
         return token
-    if args.token:
-        return args.token
-    return _prompt_token(url, no_browser=args.no_browser)
+    if gopts.token:
+        return gopts.token
+    return _prompt_token(url, no_browser=no_browser)
 
 
-def cmd_login(args: argparse.Namespace) -> Any:
-    url = _resolve_login_url(args)
-    token = _resolve_token(args, url)
-    path = _config_path(args)
+def _token_source(gopts: GlobalOptions, config: Config) -> str:
+    if os.environ.get(ENV_TOKEN):
+        return "env"
+    if config.base_url and secrets.get_token(config.base_url):
+        return "keyring"
+    if load_config_file(_config_path(gopts.config)).get("token"):
+        return "file"
+    return "none"
+
+
+@click.group("auth", short_help="manage credentials (login, status, token, logout)")
+def auth() -> None:
+    """Store and inspect the OpenProject host URL and API token, like 'gh auth'."""
+
+
+@auth.command(
+    "login",
+    short_help="authenticate and store the host URL and API token",
+    epilog=(
+        "\b\n"
+        "Examples:\n"
+        "  openproject-cli auth login --url https://op.example.com\n"
+        "  openproject-cli auth login --url https://op.example.com --with-token < token.txt"
+    ),
+)
+@click.option(
+    "--url",
+    help="OpenProject base URL (saved to config; reused from config/$OPENPROJECT_URL if omitted)",
+)
+@click.option("--with-token", "with_token", is_flag=True, help="read the token from stdin")
+@click.option("--token", help="API token value (consider --with-token to avoid shell history)")
+@click.option(
+    "--no-browser",
+    "no_browser",
+    is_flag=True,
+    help="do not open the API token page in a browser during interactive login",
+)
+@click.option(
+    "--insecure-storage",
+    "insecure_storage",
+    is_flag=True,
+    help="store the token in the config file instead of the system keyring",
+)
+@common_options("url", "token")
+@click.pass_context
+def login(
+    ctx: click.Context, with_token: bool, no_browser: bool, insecure_storage: bool, **_globals: object
+) -> None:
+    """Store credentials, interactively when no token flag is given.
+
+    With no token flag it opens the API token page in a browser and prompts for
+    the token. The token is saved in the system keyring by default; use
+    --insecure-storage for the config file.
+    """
+    gopts = resolve_globals(ctx)
+    url = _resolve_login_url(gopts)
+    token = _resolve_token(gopts, url, with_token=with_token, no_browser=no_browser)
+    path = _config_path(gopts.config)
 
     # Preserve any existing non-secret settings in the file.
     existing = load_config_file(path)
-    timeout = float(existing.get("timeout", 30.0))
+    timeout = float(existing.get("timeout", DEFAULT_TIMEOUT))
     verify_ssl = bool(existing.get("verify_ssl", True))
 
     storage = "file"
-    if not args.insecure_storage and secrets.set_token(url, token):
+    if not insecure_storage and secrets.set_token(url, token):
         storage = "keyring"
-    else:
-        if not args.insecure_storage:
-            print("warning: no keyring backend available; storing token in the config file", file=sys.stderr)
+    elif not insecure_storage:
+        print("warning: no keyring backend available; storing token in the config file", file=sys.stderr)
 
     # With keyring storage the file must not hold the secret.
     file_token = "" if storage == "keyring" else token
     saved = save_config_file(
         Config(base_url=url, token=file_token, timeout=timeout, verify_ssl=verify_ssl), path
     )
-    return {"saved": str(saved), "url": url, "tokenStorage": storage}
+    emit_result({"saved": str(saved), "url": url, "tokenStorage": storage}, gopts)
 
 
-def _token_source(args: argparse.Namespace, config: Config) -> str:
-    import os
-
-    if os.environ.get(ENV_TOKEN):
-        return "env"
-    if config.base_url and secrets.get_token(config.base_url):
-        return "keyring"
-    if load_config_file(_config_path(args)).get("token"):
-        return "file"
-    return "none"
-
-
-def cmd_status(args: argparse.Namespace) -> Any:
-    config = config_from_args(args)
+@auth.command("status", short_help="show the resolved configuration and verify it")
+@click.option("--offline", is_flag=True, help="do not contact the server")
+@common_options()
+@click.pass_context
+def status(ctx: click.Context, offline: bool, **_globals: object) -> None:
+    """Report the effective configuration and token source; verify against the server unless --offline."""
+    gopts = resolve_globals(ctx)
+    config = config_from_args(gopts)
     result: dict[str, Any] = {
-        "configFile": str(_config_path(args)),
+        "configFile": str(_config_path(gopts.config)),
         "url": config.base_url or None,
         "tokenConfigured": bool(config.token),
-        "tokenSource": _token_source(args, config),
+        "tokenSource": _token_source(gopts, config),
         "verifySsl": config.verify_ssl,
     }
-    if args.offline:
-        return result
+    if offline:
+        emit_result(result, gopts)
+        return
     if not config.base_url or not config.token:
         result["loggedIn"] = False
         result["error"] = "missing url or token"
-        return result
+        emit_result(result, gopts)
+        return
     try:
         user = Client(config).current_user()
         result["loggedIn"] = True
@@ -157,26 +211,38 @@ def cmd_status(args: argparse.Namespace) -> Any:
     except OpenProjectCliError as exc:
         result["loggedIn"] = False
         result["error"] = str(exc)
-    return result
+    emit_result(result, gopts)
 
 
-def cmd_token(args: argparse.Namespace) -> Any:
-    config = config_from_args(args)
+@auth.command("token", short_help="print the resolved API token")
+@common_options()
+@click.pass_context
+def token(ctx: click.Context, **_globals: object) -> None:
+    """Print the resolved API token to stdout."""
+    gopts = resolve_globals(ctx)
+    config = config_from_args(gopts)
     if not config.token:
         raise AuthError("No token configured. Run 'openproject-cli auth login'.")
     # Print the raw token (like 'gh auth token') so it can be captured directly.
-    print(config.token)
-    return None
+    try:
+        print(config.token)
+    except BrokenPipeError:
+        silence_broken_pipe()
 
 
-def cmd_logout(args: argparse.Namespace) -> Any:
-    config = config_from_args(args)
+@auth.command("logout", short_help="remove the stored token")
+@common_options()
+@click.pass_context
+def logout(ctx: click.Context, **_globals: object) -> None:
+    """Remove the stored token from the keyring and the config file."""
+    gopts = resolve_globals(ctx)
+    config = config_from_args(gopts)
     url = config.base_url
     if not url:
         raise AuthError("No configured URL to log out from.")
     keyring_cleared = secrets.delete_token(url)
     # Drop the token from the config file as well, keeping non-secret settings.
-    path = _config_path(args)
+    path = _config_path(gopts.config)
     existing = load_config_file(path)
     file_had_token = bool(existing.get("token"))
     if file_had_token:
@@ -184,75 +250,11 @@ def cmd_logout(args: argparse.Namespace) -> Any:
             Config(
                 base_url=existing.get("url", url),
                 token="",
-                timeout=float(existing.get("timeout", 30.0)),
+                timeout=float(existing.get("timeout", DEFAULT_TIMEOUT)),
                 verify_ssl=bool(existing.get("verify_ssl", True)),
             ),
             path,
         )
-    return {"loggedOut": url, "keyringCleared": keyring_cleared, "fileTokenCleared": file_had_token}
-
-
-def register(subparsers: argparse._SubParsersAction) -> None:
-    parser = subparsers.add_parser(
-        "auth",
-        help="manage credentials (login, status, token, logout)",
-        description="Store and inspect the OpenProject host URL and API token, like 'gh auth'.",
+    emit_result(
+        {"loggedOut": url, "keyringCleared": keyring_cleared, "fileTokenCleared": file_had_token}, gopts
     )
-    actions = parser.add_subparsers(dest="action", required=True, metavar="<action>")
-
-    p_login = actions.add_parser(
-        "login",
-        help="authenticate and store the host URL and API token",
-        description=(
-            "Store credentials. With no token flag it runs interactively: opens the "
-            "API token page in a browser and prompts for the token. The token is saved "
-            "in the system keyring by default; use --insecure-storage for the config file."
-        ),
-        epilog=(
-            "Examples:\n"
-            "  openproject-cli auth login --url https://op.example.com\n"
-            "  openproject-cli auth login --url https://op.example.com --with-token < token.txt"
-        ),
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-    )
-    p_login.add_argument(
-        "--url",
-        help="OpenProject base URL (saved to config; reused from config/$OPENPROJECT_URL if omitted)",
-    )
-    p_login.add_argument(
-        "--with-token", dest="with_token", action="store_true", help="read the token from stdin"
-    )
-    p_login.add_argument("--token", help="API token value (consider --with-token to avoid shell history)")
-    p_login.add_argument(
-        "--no-browser",
-        dest="no_browser",
-        action="store_true",
-        help="do not open the API token page in a browser during interactive login",
-    )
-    p_login.add_argument(
-        "--insecure-storage",
-        dest="insecure_storage",
-        action="store_true",
-        help="store the token in the config file instead of the system keyring",
-    )
-    p_login.set_defaults(func=cmd_login)
-
-    p_status = actions.add_parser(
-        "status",
-        help="show the resolved configuration and verify it",
-        description="Report the effective configuration and token source; verify against the server unless --offline.",
-    )
-    p_status.add_argument("--offline", action="store_true", help="do not contact the server")
-    p_status.set_defaults(func=cmd_status)
-
-    p_token = actions.add_parser(
-        "token", help="print the resolved API token", description="Print the resolved API token to stdout."
-    )
-    p_token.set_defaults(func=cmd_token)
-
-    p_logout = actions.add_parser(
-        "logout",
-        help="remove the stored token",
-        description="Remove the stored token from the keyring and the config file.",
-    )
-    p_logout.set_defaults(func=cmd_logout)
