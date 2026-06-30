@@ -225,3 +225,87 @@ def test_custom_fields_empty_makes_no_request():
     payload = {"id": 1, "_links": {"schema": {"href": "/api/v3/work_packages/schemas/1-7"}}}
     assert client.custom_fields(payload) == []
     assert router.requests == []
+
+
+def test_request_retries_idempotent_on_5xx(monkeypatch):
+    sleeps: list[float] = []
+    monkeypatch.setattr("openproject_cli.client.time.sleep", lambda s: sleeps.append(s))
+    calls = {"n": 0}
+
+    def handler(_req):
+        calls["n"] += 1
+        if calls["n"] < 3:
+            return json_response({"message": "busy"}, status=503)
+        return json_response({"id": 1})
+
+    router = Router().add_handler("GET", "/api/v3/work_packages/1", handler)
+    client = make_client(router)
+    assert client.get_json("work_packages/1") == {"id": 1}
+    assert calls["n"] == 3
+    assert len(sleeps) == 2  # two retries before success
+
+
+def test_request_does_not_retry_post(monkeypatch):
+    monkeypatch.setattr("openproject_cli.client.time.sleep", lambda _s: None)
+    calls = {"n": 0}
+
+    def handler(_req):
+        calls["n"] += 1
+        return json_response({"message": "busy"}, status=503)
+
+    router = Router().add_handler("POST", "/api/v3/work_packages", handler)
+    client = make_client(router)
+    with pytest.raises(ApiError):
+        client.request("POST", "work_packages", json_body={})
+    assert calls["n"] == 1  # POST is never replayed
+
+
+def test_request_honours_retry_after(monkeypatch):
+    sleeps: list[float] = []
+    monkeypatch.setattr("openproject_cli.client.time.sleep", lambda s: sleeps.append(s))
+    calls = {"n": 0}
+
+    def handler(_req):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return httpx.Response(429, headers={"Retry-After": "7"}, json={"message": "slow down"})
+        return json_response({"id": 1})
+
+    router = Router().add_handler("GET", "/api/v3/work_packages/1", handler)
+    client = make_client(router)
+    assert client.get_json("work_packages/1") == {"id": 1}
+    assert sleeps == [7.0]
+
+
+def test_request_exhausts_retries_and_raises(monkeypatch):
+    monkeypatch.setattr("openproject_cli.client.time.sleep", lambda _s: None)
+    router = Router().add("GET", "/api/v3/work_packages/1", {"message": "down"}, status=503)
+    client = make_client(router)
+    with pytest.raises(ApiError):
+        client.get_json("work_packages/1")
+    assert len(router.requests) == 4  # initial attempt + 3 default retries
+
+
+def test_absolute_url_to_other_host_is_refused():
+    from openproject_cli.errors import InputError
+
+    router = Router()
+    client = make_client(router)
+    with pytest.raises(InputError):
+        client.request("GET", "https://evil.test/api/v3/work_packages/1")
+    assert router.requests == []  # nothing was sent
+
+
+def test_absolute_url_to_same_host_is_allowed():
+    router = Router().add("GET", "/api/v3/work_packages/1", {"id": 1})
+    client = make_client(router)
+    assert client.request("GET", "https://op.test/api/v3/work_packages/1").json() == {"id": 1}
+
+
+def test_http_base_url_warns(capsys):
+    from openproject_cli.client import Client
+    from openproject_cli.config import Config
+
+    router = Router()
+    Client(Config(base_url="http://op.test", token="T"), transport=httpx.MockTransport(router))
+    assert "plaintext HTTP" in capsys.readouterr().err

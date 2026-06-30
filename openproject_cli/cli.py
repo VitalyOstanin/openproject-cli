@@ -52,6 +52,11 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--timeout", type=float, help="request timeout in seconds (default: 30)")
     parser.add_argument(
+        "--retries",
+        type=int,
+        help="retries for idempotent requests on 429/5xx (default: 3, 0 disables)",
+    )
+    parser.add_argument(
         "--insecure",
         action="store_const",
         const=True,

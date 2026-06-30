@@ -25,10 +25,13 @@ from openproject_cli import secrets
 from openproject_cli.errors import AuthError, ConfigError
 
 DEFAULT_TIMEOUT = 30.0
+DEFAULT_RETRIES = 3
+RETRY_BACKOFF = 0.5
 
 ENV_URL = "OPENPROJECT_URL"
 ENV_TOKEN = "OPENPROJECT_TOKEN"
 ENV_TIMEOUT = "OPENPROJECT_TIMEOUT"
+ENV_RETRIES = "OPENPROJECT_RETRIES"
 ENV_INSECURE = "OPENPROJECT_INSECURE"
 ENV_CONFIG = "OPENPROJECT_CONFIG"
 
@@ -41,6 +44,8 @@ class Config:
     token: str
     timeout: float = DEFAULT_TIMEOUT
     verify_ssl: bool = True
+    max_retries: int = DEFAULT_RETRIES
+    retry_backoff: float = RETRY_BACKOFF
 
     def require_credentials(self) -> None:
         """Raise AuthError if the URL or token is missing."""
@@ -121,6 +126,7 @@ def resolve_config(
     url: str | None = None,
     token: str | None = None,
     timeout: float | None = None,
+    retries: int | None = None,
     insecure: bool | None = None,
     config_path: Path | None = None,
     env: Mapping[str, str] | None = None,
@@ -149,7 +155,26 @@ def resolve_config(
         except ValueError as exc:
             raise ConfigError(f"{ENV_TIMEOUT} must be a number, got {env[ENV_TIMEOUT]!r}.") from exc
     else:
-        eff_timeout = float(file_data.get("timeout", DEFAULT_TIMEOUT))
+        raw_timeout = file_data.get("timeout", DEFAULT_TIMEOUT)
+        try:
+            eff_timeout = float(raw_timeout)
+        except (TypeError, ValueError) as exc:
+            raise ConfigError(f"timeout in the config file must be a number, got {raw_timeout!r}.") from exc
+
+    if retries is not None:
+        eff_retries = retries
+    elif env.get(ENV_RETRIES):
+        try:
+            eff_retries = int(env[ENV_RETRIES])
+        except ValueError as exc:
+            raise ConfigError(f"{ENV_RETRIES} must be an integer, got {env[ENV_RETRIES]!r}.") from exc
+    else:
+        raw_retries = file_data.get("retries", DEFAULT_RETRIES)
+        try:
+            eff_retries = int(raw_retries)
+        except (TypeError, ValueError) as exc:
+            raise ConfigError(f"retries in the config file must be an integer, got {raw_retries!r}.") from exc
+    eff_retries = max(0, eff_retries)
 
     if insecure is not None:
         verify_ssl = not insecure
@@ -161,4 +186,10 @@ def resolve_config(
             file_verify = _coerce_bool(file_data.get("verify_ssl"))
             verify_ssl = True if file_verify is None else file_verify
 
-    return Config(base_url=base_url, token=str(api_token), timeout=eff_timeout, verify_ssl=verify_ssl)
+    return Config(
+        base_url=base_url,
+        token=str(api_token),
+        timeout=eff_timeout,
+        verify_ssl=verify_ssl,
+        max_retries=eff_retries,
+    )

@@ -98,7 +98,7 @@ def test_time_create_converts_hours(cli_run, router):
 
 def test_comment_create(cli_run, router):
     router.add(
-        "POST", "/api/v3/work_packages/1234/comment", {"id": 9, "comment": {"raw": "Done"}, "_links": {}}
+        "POST", "/api/v3/work_packages/1234/activities", {"id": 9, "comment": {"raw": "Done"}, "_links": {}}
     )
     code, out, _ = cli_run(["comment", "create", "--work-package", "1234", "Done"])
     assert code == 0

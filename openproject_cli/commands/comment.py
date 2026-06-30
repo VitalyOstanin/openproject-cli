@@ -46,7 +46,7 @@ def cmd_get(args: argparse.Namespace) -> Any:
 def cmd_create(args: argparse.Namespace) -> Any:
     client = runtime.client_from_args(args)
     body = {"comment": {"raw": args.text}}
-    payload = client.request("POST", f"work_packages/{args.work_package}/comment", json_body=body).json()
+    payload = client.request("POST", f"work_packages/{args.work_package}/activities", json_body=body).json()
     return payload if args.raw else normalize.comment(payload)
 
 

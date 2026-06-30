@@ -93,3 +93,25 @@ def test_require_credentials():
 def test_bad_timeout_env_raises(tmp_path):
     with pytest.raises(ConfigError):
         resolve_config(config_path=tmp_path / "x.yaml", env={"OPENPROJECT_TIMEOUT": "abc"})
+
+
+def test_bad_timeout_in_file_raises(tmp_path):
+    path = tmp_path / "c.yaml"
+    path.write_text("timeout: not-a-number\n", encoding="utf-8")
+    with pytest.raises(ConfigError):
+        resolve_config(config_path=path, env={})
+
+
+def test_bad_retries_env_raises(tmp_path):
+    with pytest.raises(ConfigError):
+        resolve_config(config_path=tmp_path / "x.yaml", env={"OPENPROJECT_RETRIES": "abc"})
+
+
+def test_retries_resolved_from_env(tmp_path):
+    cfg = resolve_config(config_path=tmp_path / "x.yaml", env={"OPENPROJECT_RETRIES": "5"})
+    assert cfg.max_retries == 5
+
+
+def test_negative_retries_clamped_to_zero(tmp_path):
+    cfg = resolve_config(config_path=tmp_path / "x.yaml", env={}, retries=-1)
+    assert cfg.max_retries == 0

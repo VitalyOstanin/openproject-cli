@@ -103,7 +103,7 @@ takes the token you generate there.
 Global options go **before** the resource:
 
 ```
-openproject-cli [--url URL] [--token TOKEN] [--config PATH] [--human] <resource> <action> [options]
+openproject-cli [--url URL] [--token TOKEN] [--config PATH] [--timeout S] [--retries N] [--insecure] [--human] <resource> <action> [options]
 ```
 
 ### Work packages
@@ -178,6 +178,7 @@ resolved in order: command-line flag, environment variable, config file.
 ```yaml
 url: https://openproject.example.com
 timeout: 30
+retries: 3
 verify_ssl: true
 # token: only present with --insecure-storage; otherwise it lives in the keyring
 ```
@@ -185,12 +186,36 @@ verify_ssl: true
 The file is written with `0600` permissions, and with keyring storage it holds
 no secret.
 
+### Environment variables
+
+| Variable               | Equivalent flag | Meaning                                        |
+|------------------------|-----------------|------------------------------------------------|
+| `OPENPROJECT_URL`      | `--url`         | base URL of the OpenProject instance            |
+| `OPENPROJECT_TOKEN`    | `--token`       | API token                                      |
+| `OPENPROJECT_TIMEOUT`  | `--timeout`     | request timeout in seconds (default `30`)       |
+| `OPENPROJECT_RETRIES`  | `--retries`     | retries for idempotent requests (default `3`)   |
+| `OPENPROJECT_INSECURE` | `--insecure`    | disable TLS verification when truthy            |
+| `OPENPROJECT_CONFIG`   | `--config`      | path to the config file                        |
+
+### Retries
+
+Idempotent requests (`GET`/`HEAD`/`OPTIONS`/`PUT`/`DELETE`) are retried on a
+transport error or a transient status (`429` and `5xx`), honouring a
+`Retry-After` header and otherwise backing off exponentially. `POST` is never
+retried, so a failed "create" cannot be duplicated. Set `--retries 0` to disable.
+
+### Transport safety
+
+The client refuses to send the API token to a host other than the configured
+one (an absolute URL passed to `api` pointing elsewhere is rejected), and warns
+on stderr when the base URL uses plaintext `http://`.
+
 ## Development
 
 ```sh
 uv venv && . .venv/bin/activate
 uv pip install -e ".[dev]"
-ruff check . && pyright && pytest
+ruff check . && ruff format --check . && pyright && pytest
 ```
 
 ## License

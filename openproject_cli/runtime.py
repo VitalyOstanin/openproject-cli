@@ -14,6 +14,7 @@ def config_from_args(args: argparse.Namespace) -> Config:
         url=args.url,
         token=args.token,
         timeout=args.timeout,
+        retries=args.retries,
         insecure=args.insecure,
         config_path=Path(args.config).expanduser() if args.config else None,
     )

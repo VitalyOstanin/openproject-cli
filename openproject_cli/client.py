@@ -13,9 +13,14 @@ import json
 import mimetypes
 import os
 import re
+import sys
 import tempfile
+import time
+from datetime import UTC, datetime
+from email.utils import parsedate_to_datetime
 from pathlib import Path
 from typing import Any, BinaryIO
+from urllib.parse import urlsplit
 
 import httpx
 
@@ -24,6 +29,12 @@ from openproject_cli.errors import ApiError, AuthError, InputError, NotFoundErro
 
 API_PREFIX = "/api/v3"
 USER_AGENT = "openproject-cli"
+
+# Methods safe to retry: replaying them cannot create duplicate side effects.
+# POST is intentionally excluded (a retried "create" could insert twice).
+IDEMPOTENT_METHODS = {"GET", "HEAD", "OPTIONS", "PUT", "DELETE"}
+# Transient HTTP statuses worth retrying: rate limiting and server-side faults.
+RETRYABLE_STATUS = {429, 500, 502, 503, 504}
 
 # OpenProject names custom fields ``customField<N>`` both as scalar payload keys
 # and as ``_links`` entries (for list-valued fields).
@@ -36,6 +47,14 @@ class Client:
     def __init__(self, config: Config, *, transport: httpx.BaseTransport | None = None) -> None:
         config.require_credentials()
         self._config = config
+        self._max_retries = config.max_retries
+        self._retry_backoff = config.retry_backoff
+        self._base_host = urlsplit(config.base_url).netloc.casefold()
+        if config.base_url.startswith("http://"):
+            print(
+                f"warning: sending the API token over plaintext HTTP to {config.base_url}",
+                file=sys.stderr,
+            )
         # Per-process caches: a CLI run is short-lived, so a plain dict (no TTL)
         # is enough to avoid refetching the same schema or user within one run.
         self._schema_name_cache: dict[str, dict[str, str]] = {}
@@ -79,6 +98,12 @@ class Client:
         """
         path = path.strip()
         if path.startswith(("http://", "https://")):
+            target_host = urlsplit(path).netloc.casefold()
+            if target_host and self._base_host and target_host != self._base_host:
+                raise InputError(
+                    f"Refusing to send the API token to {target_host!r}, which differs from "
+                    f"the configured host {self._base_host!r}."
+                )
             return path
         if not path.startswith("/"):
             path = "/" + path
@@ -100,23 +125,51 @@ class Client:
         data: dict[str, Any] | None = None,
         headers: dict[str, str] | None = None,
     ) -> httpx.Response:
-        """Send a request and raise a typed error for non-2xx responses."""
-        try:
-            response = self._http.request(
-                method.upper(),
-                self._url(path),
-                params=params,
-                json=json_body,
-                files=files,
-                data=data,
-                headers=headers,
-            )
-        except httpx.HTTPError as exc:
-            raise ApiError(0, f"HTTP request to OpenProject failed: {exc}") from exc
-        if response.is_success:
-            return response
-        self._raise_for_status(response)
-        return response  # unreachable, keeps type checkers happy
+        """Send a request and raise a typed error for non-2xx responses.
+
+        Idempotent methods (GET/HEAD/OPTIONS/PUT/DELETE) are retried up to
+        ``max_retries`` times on a transport error or a transient status
+        (429/5xx), honouring a ``Retry-After`` header and otherwise backing off
+        exponentially. POST is never retried so a failed "create" cannot be
+        duplicated.
+        """
+        method = method.upper()
+        url = self._url(path)
+        retryable = method in IDEMPOTENT_METHODS
+        attempt = 0
+        while True:
+            try:
+                response = self._http.request(
+                    method,
+                    url,
+                    params=params,
+                    json=json_body,
+                    files=files,
+                    data=data,
+                    headers=headers,
+                )
+            except httpx.HTTPError as exc:
+                if retryable and attempt < self._max_retries:
+                    self._sleep_before_retry(attempt, None)
+                    attempt += 1
+                    continue
+                raise ApiError(0, f"HTTP request to OpenProject failed: {exc}") from exc
+            if response.is_success:
+                return response
+            if retryable and attempt < self._max_retries and response.status_code in RETRYABLE_STATUS:
+                self._sleep_before_retry(attempt, response)
+                attempt += 1
+                continue
+            self._raise_for_status(response)
+            return response  # unreachable, keeps type checkers happy
+
+    def _sleep_before_retry(self, attempt: int, response: httpx.Response | None) -> None:
+        delay = self._retry_backoff * (2**attempt)
+        if response is not None:
+            retry_after = _retry_after_seconds(response)
+            if retry_after is not None:
+                delay = retry_after
+        time.sleep(delay)
 
     def _raise_for_status(self, response: httpx.Response) -> None:
         payload: object
@@ -322,6 +375,24 @@ class Client:
                 400, f"Principal {ref!r} is ambiguous ({len(matches)} matches). Pass a numeric id."
             )
         return matches[0]
+
+
+def _retry_after_seconds(response: httpx.Response) -> float | None:
+    """Parse a ``Retry-After`` header (delta-seconds or HTTP-date) to seconds."""
+    value = (response.headers.get("Retry-After") or "").strip()
+    if not value:
+        return None
+    if value.isdigit():
+        return float(value)
+    try:
+        when = parsedate_to_datetime(value)
+    except (TypeError, ValueError):
+        return None
+    if when is None:
+        return None
+    if when.tzinfo is None:
+        when = when.replace(tzinfo=UTC)
+    return max(0.0, (when - datetime.now(UTC)).total_seconds())
 
 
 def _extract_raw_custom_fields(payload: dict[str, Any]) -> dict[str, Any]:

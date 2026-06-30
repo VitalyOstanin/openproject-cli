@@ -6,6 +6,39 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- Automatic retries for idempotent requests (`GET`/`HEAD`/`OPTIONS`/`PUT`/
+  `DELETE`) on transport errors and transient statuses (`429`/`5xx`), honouring
+  `Retry-After` with exponential backoff. Configurable via `--retries` /
+  `OPENPROJECT_RETRIES` (default 3, `0` disables); `POST` is never retried.
+
+### Security
+
+- The client refuses to send the API token to a host other than the configured
+  one (an absolute URL passed to `api` pointing elsewhere is rejected) and warns
+  on stderr when the base URL uses plaintext `http://`.
+
+### Fixed
+
+- `comment create` posted to a non-existent endpoint
+  (`work_packages/{id}/comment`); it now uses `work_packages/{id}/activities`,
+  which the API requires (the old path returned HTTP 404).
+
+### Changed
+
+- CI installs into a virtual environment and runs tools via `uv run`; the
+  previous `uv pip install --system` failed as "externally managed" so lint,
+  type check and tests were skipped. Added `timeout-minutes` to the CI job.
+- The test suite runs via a bare `pytest` invocation again (added `pythonpath`),
+  and a default per-test timeout is enforced via `pytest-timeout`.
+- Build requires `setuptools>=77` for the PEP 639 string `license` field.
+- A bad `timeout` value read from the config file now raises a clear
+  `ConfigError` instead of an unhandled traceback (matching the env-var path).
+- GitHub Actions are pinned by commit SHA (with a version comment). The publish
+  workflow now gates on a green test job, checks the tag matches the project
+  version, and creates a GitHub Release.
+
 ## [0.1.0]
 
 Initial release.
