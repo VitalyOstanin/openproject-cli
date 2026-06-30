@@ -3,6 +3,8 @@
 import io
 import json
 
+import pytest
+
 from openproject_cli import cli
 from openproject_cli.errors import NotFoundError
 
@@ -181,6 +183,34 @@ def test_error_sets_exit_code(cli_run, router):
     code, _, err = cli_run(["wp", "get", "9"])
     assert code == NotFoundError.exit_code
     assert "error:" in err
+
+
+def test_unexpected_error_is_summarized(monkeypatch, capsys):
+    # A non-domain exception is reported as a one-line summary, not a traceback.
+    from openproject_cli import runtime
+
+    def boom(_args):
+        raise RuntimeError("kaboom")
+
+    monkeypatch.setattr(runtime, "client_from_args", boom)
+    code = cli.main(["wp", "get", "1234"])
+    err = capsys.readouterr().err
+    assert code == 1
+    assert "unexpected failure: kaboom" in err
+    assert "OPENPROJECT_DEBUG" in err
+
+
+def test_unexpected_error_debug_reraises(monkeypatch):
+    # With OPENPROJECT_DEBUG set, the original exception propagates (full traceback).
+    from openproject_cli import runtime
+
+    def boom(_args):
+        raise RuntimeError("kaboom")
+
+    monkeypatch.setattr(runtime, "client_from_args", boom)
+    monkeypatch.setenv("OPENPROJECT_DEBUG", "1")
+    with pytest.raises(RuntimeError):
+        cli.main(["wp", "get", "1234"])
 
 
 def test_auth_login_uses_keyring_by_default(tmp_path, capsys, fake_keyring):

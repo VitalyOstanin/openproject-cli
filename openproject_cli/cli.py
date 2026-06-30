@@ -10,6 +10,7 @@ before it. Output is JSON by default; pass ``--human`` for a flat text rendering
 from __future__ import annotations
 
 import contextlib
+import os
 import signal
 import sys
 from types import FrameType
@@ -27,6 +28,12 @@ from openproject_cli.commands.time import time_group
 from openproject_cli.commands.work_packages import wp
 from openproject_cli.errors import OpenProjectCliError
 from openproject_cli.output import silence_broken_pipe
+
+# Conventional shell exit code for a process terminated by an interrupt.
+EXIT_INTERRUPTED = 130
+# Env var that re-raises an unexpected exception (full traceback) instead of the
+# one-line summary, for debugging.
+ENV_DEBUG = "OPENPROJECT_DEBUG"
 
 _DESCRIPTION = "A non-interactive command-line client for the OpenProject API."
 _EPILOG = (
@@ -84,7 +91,7 @@ def main(argv: list[str] | None = None) -> int:
     except click.exceptions.Abort:
         # Click converts SIGINT / EOF (e.g. during a prompt) into Abort.
         print("interrupted", file=sys.stderr)
-        return 130
+        return EXIT_INTERRUPTED
     except click.ClickException as exc:
         # Usage errors carry exit_code 2; other Click errors carry 1.
         exc.show()
@@ -95,7 +102,7 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     except KeyboardInterrupt:
         print("interrupted", file=sys.stderr)
-        return 130
+        return EXIT_INTERRUPTED
     except SystemExit as exc:
         code = exc.code
         if code is None:
@@ -103,6 +110,14 @@ def main(argv: list[str] | None = None) -> int:
         if isinstance(code, int):
             return code
         print(code, file=sys.stderr)
+        return 1
+    except Exception as exc:  # noqa: BLE001 — top-level guard for any unexpected error
+        # An unexpected (non-domain) error: print a one-line summary instead of a
+        # raw traceback. Set OPENPROJECT_DEBUG=1 to re-raise the full traceback.
+        if os.environ.get(ENV_DEBUG):
+            raise
+        print(f"error: unexpected failure: {exc}", file=sys.stderr)
+        print(f"set {ENV_DEBUG}=1 for a full traceback", file=sys.stderr)
         return 1
     # ``--help`` / ``--version`` make Click return their exit code (0); a normal
     # command returns None after emitting its own output.

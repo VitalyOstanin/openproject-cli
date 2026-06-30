@@ -115,3 +115,10 @@ def test_retries_resolved_from_env(tmp_path):
 def test_negative_retries_clamped_to_zero(tmp_path):
     cfg = resolve_config(config_path=tmp_path / "x.yaml", env={}, retries=-1)
     assert cfg.max_retries == 0
+
+
+def test_bare_url_gets_https_scheme(tmp_path):
+    # A scheme-less URL is defaulted to https:// so the client's host check
+    # (token must not be sent elsewhere) is not silently disabled.
+    cfg = resolve_config(url="op.example.com", token="t", config_path=tmp_path / "x.yaml", env={})
+    assert cfg.base_url == "https://op.example.com"

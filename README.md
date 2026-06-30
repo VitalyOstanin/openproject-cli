@@ -212,19 +212,24 @@ no secret.
 | `OPENPROJECT_RETRIES`  | `--retries`     | retries for idempotent requests (default `3`)   |
 | `OPENPROJECT_INSECURE` | `--insecure`    | disable TLS verification when truthy            |
 | `OPENPROJECT_CONFIG`   | `--config`      | path to the config file                        |
+| `OPENPROJECT_DEBUG`    | —               | re-raise an unexpected error as a full traceback (otherwise a one-line summary is printed) |
 
 ### Retries
 
 Idempotent requests (`GET`/`HEAD`/`OPTIONS`/`PUT`/`DELETE`) are retried on a
 transport error or a transient status (`429` and `5xx`), honouring a
-`Retry-After` header and otherwise backing off exponentially. `POST` is never
-retried, so a failed "create" cannot be duplicated. Set `--retries 0` to disable.
+`Retry-After` header and otherwise backing off exponentially (each sleep is
+capped so a large `--retries` or a far-future `Retry-After` cannot hang the
+CLI). Each retry prints a one-line warning to stderr. `POST` is never retried,
+so a failed "create" cannot be duplicated. Set `--retries 0` to disable.
 
 ### Transport safety
 
 The client refuses to send the API token to a host other than the configured
-one (an absolute URL passed to `api` pointing elsewhere is rejected), and warns
-on stderr when the base URL uses plaintext `http://`.
+one (an absolute URL passed to `api` pointing elsewhere is rejected), warns on
+stderr when the base URL uses plaintext `http://`, and does not follow HTTP
+redirects (a redirect would otherwise replay the token to its target). A
+scheme-less base URL is treated as `https://`.
 
 ## Development
 

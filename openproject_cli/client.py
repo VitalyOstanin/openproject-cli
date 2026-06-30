@@ -39,6 +39,10 @@ RETRYABLE_STATUS = {429, 500, 502, 503, 504}
 DEFAULT_CHUNK_SIZE = 65536
 # Page size used when walking a whole collection (name resolution).
 COLLECTION_PAGE_SIZE = 200
+# Upper bound on a single retry sleep, so a large --retries (exponential
+# backoff) or a far-future ``Retry-After`` date cannot hang the CLI for an
+# unbounded time on ``time.sleep``.
+MAX_RETRY_SLEEP = 60.0
 
 # OpenProject names custom fields ``customField<N>`` both as scalar payload keys
 # and as ``_links`` entries (for list-valued fields).
@@ -73,7 +77,11 @@ class Client:
             timeout=config.timeout,
             verify=config.verify_ssl,
             headers={"User-Agent": USER_AGENT, "Accept": "application/json"},
-            follow_redirects=True,
+            # Do not follow redirects: the API v3 does not redirect, and
+            # following one blindly could replay the Basic-auth token to the
+            # redirect target (an attacker-influenced Location is an SSRF /
+            # token-exfiltration vector). A 3xx surfaces as an error instead.
+            follow_redirects=False,
         )
 
     def __enter__(self) -> Client:
@@ -154,6 +162,11 @@ class Client:
                 )
             except httpx.HTTPError as exc:
                 if retryable and attempt < self._max_retries:
+                    print(
+                        f"warning: {method} {url} failed ({exc}); "
+                        f"retrying ({attempt + 1}/{self._max_retries})",
+                        file=sys.stderr,
+                    )
                     self._sleep_before_retry(attempt, None)
                     attempt += 1
                     continue
@@ -161,6 +174,11 @@ class Client:
             if response.is_success:
                 return response
             if retryable and attempt < self._max_retries and response.status_code in RETRYABLE_STATUS:
+                print(
+                    f"warning: {method} {url} returned HTTP {response.status_code}; "
+                    f"retrying ({attempt + 1}/{self._max_retries})",
+                    file=sys.stderr,
+                )
                 self._sleep_before_retry(attempt, response)
                 attempt += 1
                 continue
@@ -173,7 +191,7 @@ class Client:
             retry_after = _retry_after_seconds(response)
             if retry_after is not None:
                 delay = retry_after
-        time.sleep(delay)
+        time.sleep(min(delay, MAX_RETRY_SLEEP))
 
     def _raise_for_status(self, response: httpx.Response) -> None:
         payload: object
@@ -310,9 +328,13 @@ class Client:
         while True:
             page_params["offset"] = str(offset)
             payload = self.get_json(path, params=page_params)
-            page = payload.get("_embedded", {}).get("elements", [])
+            # ``_embedded``/``total`` may be present but null; ``or`` guards both
+            # the missing-key and the explicit-null case.
+            page = (payload.get("_embedded") or {}).get("elements") or []
             elements.extend(page)
-            total = payload.get("total", len(elements))
+            total = payload.get("total")
+            if not isinstance(total, int):
+                total = len(elements)
             if not page or len(elements) >= total:
                 return elements
             offset += 1
@@ -394,13 +416,25 @@ class Client:
         matches = [
             str(item["id"]) for item in elements if (item.get("name") or "").casefold() == ref.casefold()
         ]
-        if not matches:
-            raise ApiError(404, f"Principal {ref!r} was not found. Pass a numeric user id or 'me'.")
-        if len(matches) > 1:
-            raise ApiError(
-                400, f"Principal {ref!r} is ambiguous ({len(matches)} matches). Pass a numeric id."
-            )
-        return matches[0]
+        return single_match(
+            matches,
+            not_found=f"Principal {ref!r} was not found. Pass a numeric user id or 'me'.",
+            ambiguous=f"Principal {ref!r} is ambiguous ({len(matches)} matches). Pass a numeric id.",
+        )
+
+
+def single_match(matches: list[str], *, not_found: str, ambiguous: str) -> str:
+    """Return the sole id in ``matches``, or raise on no / multiple matches.
+
+    Shared by the name resolvers (principals here, statuses/types/activities in
+    ``resolve``) so the "not found" (404) and "ambiguous" (400) handling lives
+    in one place; callers supply the wording specific to their entity.
+    """
+    if not matches:
+        raise ApiError(404, not_found)
+    if len(matches) > 1:
+        raise ApiError(400, ambiguous)
+    return matches[0]
 
 
 def _retry_after_seconds(response: httpx.Response) -> float | None:
@@ -449,7 +483,7 @@ def _extract_message(payload: object) -> str | None:
         message = payload.get("message")
         if isinstance(message, str) and message:
             # Append validation details when present (HAL ``_embedded.errors``).
-            errors = payload.get("_embedded", {}).get("errors")
+            errors = (payload.get("_embedded") or {}).get("errors")
             if isinstance(errors, list):
                 extra = [str(e["message"]) for e in errors if isinstance(e, dict) and e.get("message")]
                 if extra:

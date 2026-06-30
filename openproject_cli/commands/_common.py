@@ -23,10 +23,6 @@ from openproject_cli.output import emit, silence_broken_pipe
 # A Click option/decorator that wraps a command callback.
 Decorator = Callable[[Callable[..., Any]], Callable[..., Any]]
 
-# Option names shared by the group and every leaf command. The attribute names
-# match those read by ``runtime.config_from_args``.
-GLOBAL_PARAMS = ("url", "token", "config", "timeout", "retries", "insecure", "human")
-
 
 @dataclass(slots=True)
 class GlobalOptions:
@@ -74,6 +70,11 @@ _OPTION_TABLE: tuple[tuple[str, Decorator], ...] = (
         ),
     ),
 )
+
+# Option names shared by the group and every leaf command, derived from the
+# single option table above. The attribute names match those read by
+# ``runtime.config_from_args``.
+GLOBAL_PARAMS = tuple(name for name, _ in _OPTION_TABLE)
 
 
 def common_options(*exclude: str) -> Decorator:

@@ -6,6 +6,32 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Security
+
+- The client no longer follows HTTP redirects. The API v3 does not redirect, and
+  following a redirect blindly could replay the Basic-auth token to the redirect
+  target (an SSRF / token-exfiltration vector); a 3xx now surfaces as an error.
+- A scheme-less base URL is defaulted to `https://`. Without a scheme the host
+  comparison that prevents sending the token to another host was silently
+  disabled (fail-open); it is now always active.
+
+### Fixed
+
+- A single retry sleep is capped (60s), so a large `--retries` (exponential
+  backoff) or a far-future `Retry-After` date can no longer hang the CLI.
+- Collection paging and error-message extraction tolerate an `_embedded` /
+  `total` field that is present but explicitly `null` (previously raised).
+
+### Changed
+
+- An unexpected (non-domain) error prints a one-line summary instead of a raw
+  traceback; set `OPENPROJECT_DEBUG=1` to re-raise the full traceback.
+- A retry now emits a one-line warning to stderr (method, URL, reason, attempt),
+  so transient failures are no longer silent.
+- The publish workflow's test job enforces the same coverage floor as CI
+  (`--cov-fail-under=75`); both workflows declare a least-privilege top-level
+  `permissions: contents: read`; the release job dropped a redundant checkout.
+
 ## [0.1.0] - 2026-07-01
 
 Initial release.

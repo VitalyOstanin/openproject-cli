@@ -322,3 +322,45 @@ def test_http_base_url_warns(capsys):
     router = Router()
     Client(Config(base_url="http://op.test", token="T"), transport=httpx.MockTransport(router))
     assert "plaintext HTTP" in capsys.readouterr().err
+
+
+def test_redirect_is_not_followed():
+    # A redirect must surface as an error rather than be followed: following it
+    # could replay the Basic-auth token to the (attacker-influenced) target.
+    router = Router().add_handler(
+        "GET",
+        "/api/v3/work_packages/1",
+        lambda _req: httpx.Response(302, headers={"Location": "https://evil.test/x"}),
+    )
+    client = make_client(router)
+    with pytest.raises(ApiError) as excinfo:
+        client.get_json("work_packages/1")
+    assert excinfo.value.status == 302
+    assert all("evil.test" not in str(r.url) for r in router.requests)  # target never contacted
+
+
+def test_retry_after_is_capped(monkeypatch):
+    # A far-future / huge Retry-After must not hang the CLI: the sleep is capped.
+    from openproject_cli.client import MAX_RETRY_SLEEP
+
+    sleeps: list[float] = []
+    monkeypatch.setattr("openproject_cli.client.time.sleep", lambda s: sleeps.append(s))
+    calls = {"n": 0}
+
+    def handler(_req):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return httpx.Response(429, headers={"Retry-After": "100000"}, json={"message": "slow"})
+        return json_response({"id": 1})
+
+    router = Router().add_handler("GET", "/api/v3/work_packages/1", handler)
+    client = make_client(router)
+    assert client.get_json("work_packages/1") == {"id": 1}
+    assert sleeps == [MAX_RETRY_SLEEP]
+
+
+def test_collect_tolerates_null_embedded():
+    # An ``_embedded``/``total`` present but explicitly null must not crash.
+    router = Router().add("GET", "/api/v3/statuses", {"_embedded": None, "total": None})
+    client = make_client(router)
+    assert client.collect("statuses") == []

@@ -8,6 +8,9 @@ dist/
 .venv/
 venv/
 
+# uv lock file (this is a library/CLI; pin via pyproject, not a committed lock)
+uv.lock
+
 # Tooling caches
 .pytest_cache/
 .ruff_cache/

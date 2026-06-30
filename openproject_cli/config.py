@@ -15,9 +15,10 @@ from __future__ import annotations
 
 import contextlib
 import os
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 import yaml
 
@@ -69,6 +70,50 @@ def default_config_path() -> Path:
     xdg = os.environ.get("XDG_CONFIG_HOME")
     base = Path(xdg).expanduser() if xdg else Path.home() / ".config"
     return base / "openproject-cli" / "config.yaml"
+
+
+def _normalize_base_url(url: str) -> str:
+    """Strip a trailing slash and default a scheme-less URL to ``https://``.
+
+    A scheme is required so the client can compare the configured host against
+    the host of any absolute URL it is later asked to call (the token must not
+    be sent elsewhere). Without a scheme ``urlsplit`` puts everything in the
+    path and the host comparison would be disabled (fail-open).
+    """
+    url = url.strip().rstrip("/")
+    if url and "://" not in url:
+        url = "https://" + url
+    return url
+
+
+def _resolve_numeric(
+    flag: float | int | None,
+    env: Mapping[str, str],
+    env_name: str,
+    file_data: dict,
+    file_key: str,
+    default: float | int,
+    caster: Callable[[Any], float | int],
+    kind: str,
+) -> float | int:
+    """Resolve a numeric setting from flag, env or file (in that order).
+
+    Mirrors the credential precedence and raises a clear ``ConfigError`` (rather
+    than an unhandled traceback) for a non-numeric env var or config-file value.
+    """
+    if flag is not None:
+        return flag
+    raw_env = env.get(env_name)
+    if raw_env:
+        try:
+            return caster(raw_env)
+        except (TypeError, ValueError) as exc:
+            raise ConfigError(f"{env_name} must be {kind}, got {raw_env!r}.") from exc
+    raw_file = file_data.get(file_key, default)
+    try:
+        return caster(raw_file)
+    except (TypeError, ValueError) as exc:
+        raise ConfigError(f"{file_key} in the config file must be {kind}, got {raw_file!r}.") from exc
 
 
 def _coerce_bool(value: object) -> bool | None:
@@ -141,40 +186,23 @@ def resolve_config(
     file_data = load_config_file(config_path)
 
     base_url = url or env.get(ENV_URL) or file_data.get("url") or ""
-    base_url = str(base_url).rstrip("/")
+    base_url = _normalize_base_url(str(base_url))
 
     # Token resolution order (highest first): flag, env, keyring, config file.
     keyring_token = secrets.get_token(base_url) if base_url else None
     api_token = token or env.get(ENV_TOKEN) or keyring_token or file_data.get("token") or ""
 
-    if timeout is not None:
-        eff_timeout = timeout
-    elif env.get(ENV_TIMEOUT):
-        try:
-            eff_timeout = float(env[ENV_TIMEOUT])
-        except ValueError as exc:
-            raise ConfigError(f"{ENV_TIMEOUT} must be a number, got {env[ENV_TIMEOUT]!r}.") from exc
-    else:
-        raw_timeout = file_data.get("timeout", DEFAULT_TIMEOUT)
-        try:
-            eff_timeout = float(raw_timeout)
-        except (TypeError, ValueError) as exc:
-            raise ConfigError(f"timeout in the config file must be a number, got {raw_timeout!r}.") from exc
-
-    if retries is not None:
-        eff_retries = retries
-    elif env.get(ENV_RETRIES):
-        try:
-            eff_retries = int(env[ENV_RETRIES])
-        except ValueError as exc:
-            raise ConfigError(f"{ENV_RETRIES} must be an integer, got {env[ENV_RETRIES]!r}.") from exc
-    else:
-        raw_retries = file_data.get("retries", DEFAULT_RETRIES)
-        try:
-            eff_retries = int(raw_retries)
-        except (TypeError, ValueError) as exc:
-            raise ConfigError(f"retries in the config file must be an integer, got {raw_retries!r}.") from exc
-    eff_retries = max(0, eff_retries)
+    eff_timeout = float(
+        _resolve_numeric(timeout, env, ENV_TIMEOUT, file_data, "timeout", DEFAULT_TIMEOUT, float, "a number")
+    )
+    eff_retries = max(
+        0,
+        int(
+            _resolve_numeric(
+                retries, env, ENV_RETRIES, file_data, "retries", DEFAULT_RETRIES, int, "an integer"
+            )
+        ),
+    )
 
     if insecure is not None:
         verify_ssl = not insecure
