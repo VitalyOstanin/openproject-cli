@@ -41,6 +41,11 @@ Detailed per-area reports live in the gitignored `docs/reviews/` directory.
   (`--url`/`--token`/`--config`/`--timeout`/`--retries`/`--insecure`/`--human`)
   are attached to the group and every leaf, so they work before the resource or
   after the subcommand (a later value overrides an earlier one). See ADR 0002.
+- [x] **[comment update — real bug]** Fixed: `comment_update` now sends
+  `{"comment": text}` (a plain string), matching the `PATCH activities/:id`
+  contract (`requires :comment, type: String`, confirmed against the server
+  source); the previous object body was rejected with "comment is invalid".
+  Test `test_comment_update_sends_comment_as_string` added.
 
 ## Minor
 

@@ -125,7 +125,9 @@ def comment_update(ctx: click.Context, activity_id: int, text: str, raw: bool, *
     gopts = resolve_globals(ctx)
     client = runtime.client_from_args(gopts)
     current = client.get_json(f"activities/{activity_id}")
-    body: dict[str, Any] = {"comment": {"raw": text}}
+    # PATCH activities/:id requires `comment` as a plain string (the server maps
+    # it to the journal notes); only the create endpoint takes an object.
+    body: dict[str, Any] = {"comment": text}
     if current.get("lockVersion") is not None:
         body["lockVersion"] = current["lockVersion"]
     payload = client.request("PATCH", f"activities/{activity_id}", json_body=body).json()

@@ -135,6 +135,20 @@ def test_comment_create(cli_run, router):
     assert json.loads(out)["comment"] == "Done"
 
 
+def test_comment_update_sends_comment_as_string(cli_run, router):
+    # PATCH activities/:id requires `comment` as a plain string, not an object
+    # (the create endpoint is the one that takes {"raw": ...}); sending an object
+    # makes the server reject the edit with "comment is invalid".
+    router.add("GET", "/api/v3/activities/9", {"id": 9, "lockVersion": 2, "_links": {}})
+    router.add("PATCH", "/api/v3/activities/9", {"id": 9, "comment": {"raw": "Edited"}, "_links": {}})
+    code, out, _ = cli_run(["comment", "update", "9", "Edited"])
+    assert code == 0
+    body = router.body()
+    assert body["comment"] == "Edited"
+    assert body["lockVersion"] == 2
+    assert json.loads(out)["comment"] == "Edited"
+
+
 def test_relation_create(cli_run, router):
     router.add("POST", "/api/v3/work_packages/1234/relations", {"id": 3, "type": "follows", "_links": {}})
     code, _, _ = cli_run(

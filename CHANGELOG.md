@@ -6,6 +6,15 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-07-01
+
+### Fixed
+
+- `comment update` now sends `comment` as a plain string. The
+  `PATCH activities/:id` endpoint requires `comment` as a `String` (only the
+  create endpoint takes an object), so the previous object body was rejected
+  with "comment is invalid".
+
 ## [0.3.0] - 2026-07-01
 
 ### Added
