@@ -23,6 +23,7 @@ from openproject_cli.commands.api import api
 from openproject_cli.commands.attachment import attachment
 from openproject_cli.commands.auth import auth
 from openproject_cli.commands.comment import comment
+from openproject_cli.commands.notification import notification_group
 from openproject_cli.commands.relation import relation
 from openproject_cli.commands.time import time_group
 from openproject_cli.commands.work_packages import wp
@@ -62,7 +63,7 @@ def cli(ctx: click.Context, **_globals: object) -> None:
     init_globals(ctx)
 
 
-for _command in (wp, comment, attachment, relation, time_group, api, auth):
+for _command in (wp, comment, attachment, relation, time_group, notification_group, api, auth):
     cli.add_command(_command)
 
 

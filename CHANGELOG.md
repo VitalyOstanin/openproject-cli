@@ -6,6 +6,20 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-07-01
+
+### Added
+
+- `notification` command: `list` (newest first), `read <id>` and `unread <id>`,
+  wrapping `/api/v3/notifications` and the `read_ian` / `unread_ian` actions.
+- `wp list --include-past` also lists tasks the user was assigned to previously,
+  not just currently. OpenProject has no server-side "was assigned" filter, so
+  the ids ever seen assigned are accumulated in a local state file
+  (`~/.local/state/openproject-cli/assignee-history.json`, keyed by host + user;
+  override the path with `OPENPROJECT_STATE`). Requires `--assignee`; results are
+  merged and sorted newest-updated first.
+- `Client.base_url` is exposed for callers that need the configured host.
+
 ### Fixed
 
 - The publish workflow's release job restores the repository checkout that

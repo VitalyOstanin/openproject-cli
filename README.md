@@ -121,6 +121,7 @@ where `GLOBAL OPTIONS` are `--url URL`, `--token TOKEN`, `--config PATH`,
 
 ```sh
 openproject-cli wp list --assignee me --open
+openproject-cli wp list --assignee me --include-past           # current + previously assigned
 openproject-cli wp list --project my-project --status "In progress"
 openproject-cli wp query 532                                    # run a saved query by id
 openproject-cli wp get 1234
@@ -139,6 +140,20 @@ retry with a more specific name or the id.
 `query_id` in the query's URL) and lists its work packages like `wp list`;
 `--offset`/`--limit` page the results. Use `api GET queries/<id>` for the full
 query definition.
+
+`wp list --include-past` (requires `--assignee`) also returns tasks the user was
+assigned to earlier, not just currently. OpenProject has no "was assigned"
+filter, so the ids ever seen assigned are accumulated in a local state file
+(`~/.local/state/openproject-cli/assignee-history.json`, keyed by host + user;
+override with `OPENPROJECT_STATE`). History therefore only grows from first use.
+
+### Notifications
+
+```sh
+openproject-cli notification list          # in-app notifications, newest first
+openproject-cli notification read 5        # mark one as read
+openproject-cli notification unread 5      # mark one as unread
+```
 
 ### Comments
 

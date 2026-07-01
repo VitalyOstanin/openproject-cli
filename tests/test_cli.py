@@ -7,6 +7,7 @@ import pytest
 
 from openproject_cli import cli
 from openproject_cli.errors import NotFoundError
+from tests.conftest import json_response
 
 
 def _filters(request) -> list:
@@ -412,3 +413,91 @@ def test_auth_login_url_optional_reuses_config(tmp_path, capsys, fake_keyring):
     saved = json.loads(capsys.readouterr().out)
     assert saved["url"] == "https://op.test"
     assert fake_keyring["https://op.test"] == "secret"
+
+
+# -- notification / include-past helpers and tests -------------------------
+
+
+def _wp(wp_id: int, updated_at: str) -> dict:
+    return {
+        "id": wp_id,
+        "subject": f"WP {wp_id}",
+        "updatedAt": updated_at,
+        "_links": {"status": {"title": "New"}, "project": {"title": "P"}},
+    }
+
+
+def _wp_page(elements: list[dict]) -> dict:
+    return {"_embedded": {"elements": elements}, "total": len(elements)}
+
+
+def test_notification_list(cli_run, router):
+    router.add(
+        "GET",
+        "/api/v3/notifications",
+        {
+            "_embedded": {
+                "elements": [
+                    {
+                        "id": 5,
+                        "reason": "assigned",
+                        "readIAN": False,
+                        "createdAt": "2026-06-26T13:14:21Z",
+                        "_links": {
+                            "resource": {"href": "/openproject/work_packages/14344", "title": "Error"},
+                            "project": {"title": "Horizon"},
+                            "activity": {"href": "/api/v3/activities/261301"},
+                        },
+                    }
+                ]
+            }
+        },
+    )
+    code, out, err = cli_run(["notification", "list"])
+    assert code == 0, err
+    data = json.loads(out)
+    assert data[0]["id"] == 5
+    assert data[0]["wpId"] == 14344
+    assert data[0]["read"] is False
+    assert "sortBy" in dict(router.last().url.params)
+
+
+def test_notification_read_posts(cli_run, router):
+    router.add("POST", "/api/v3/notifications/5/read_ian", None, status=204)
+    code, out, err = cli_run(["notification", "read", "5"])
+    assert code == 0, err
+    assert router.last().method == "POST"
+    assert router.last().url.path == "/api/v3/notifications/5/read_ian"
+
+
+def test_wp_list_include_past_merges_history(cli_run, router, tmp_path, monkeypatch):
+    monkeypatch.setenv("OPENPROJECT_STATE", str(tmp_path / "hist.json"))
+    router.add("GET", "/api/v3/users/me", {"id": 7})
+
+    def work_packages(request):
+        filters = json.loads(dict(request.url.params).get("filters", "[]"))
+        keys = {k for f in filters for k in f}
+        if "assignee" in keys:
+            return json_response(_wp_page([_wp(100, "2026-06-30T10:00:00Z")]))
+        if "id" in keys:
+            return json_response(_wp_page([_wp(50, "2026-07-01T09:00:00Z")]))
+        return json_response(_wp_page([]))
+
+    router.add_handler("GET", "/api/v3/work_packages", work_packages)
+
+    from openproject_cli import state
+
+    state.save_assignee_history("https://op.test", 7, [50])
+
+    code, out, err = cli_run(["wp", "list", "--assignee", "me", "--include-past", "--raw"])
+    assert code == 0, err
+    data = json.loads(out)
+    ids = [item["id"] for item in data]
+    assert ids == [50, 100]
+    assert state.load_assignee_history("https://op.test", 7) == [50, 100]
+
+
+def test_wp_list_include_past_requires_assignee(cli_run, router):
+    code, out, err = cli_run(["wp", "list", "--include-past"])
+    assert code != 0
+    assert "assignee" in err.lower()

@@ -7,7 +7,7 @@ from typing import Any
 
 import click
 
-from openproject_cli import normalize, resolve, runtime
+from openproject_cli import normalize, resolve, runtime, state
 from openproject_cli.client import API_PREFIX, Client
 from openproject_cli.commands._common import (
     common_options,
@@ -72,6 +72,35 @@ def _build_links_and_body(
     return body
 
 
+def _list_include_past(
+    client: Client, filters: list[dict[str, Any]], assignee: str, offset: int, limit: int | None
+) -> list[dict[str, Any]]:
+    """Return current + previously-assigned work packages, newest-updated first."""
+    uid = client.resolve_principal_id(assignee)
+    params = paging_params(offset, limit)
+    if filters:
+        params["filters"] = json.dumps(filters)
+    current = normalize.collection(client.get_json("work_packages", params=params))
+    current_ids = {int(item["id"]) for item in current if item.get("id") is not None}
+
+    history = set(state.load_assignee_history(client.base_url, uid))
+    state.save_assignee_history(client.base_url, uid, history | current_ids)
+
+    past_only = sorted(history - current_ids)
+    extra = _fetch_by_ids(client, filters, past_only) if past_only else []
+    merged = current + extra
+    merged.sort(key=lambda item: item.get("updatedAt") or "", reverse=True)
+    return merged
+
+
+def _fetch_by_ids(client: Client, filters: list[dict[str, Any]], ids: list[int]) -> list[dict[str, Any]]:
+    """Fetch work packages by id, keeping any non-assignee filters (status/project/open)."""
+    non_assignee = [f for f in filters if "assignee" not in f]
+    id_filter = {"id": {"operator": "=", "values": [str(i) for i in ids]}}
+    params = {"pageSize": str(len(ids)), "filters": json.dumps([id_filter, *non_assignee])}
+    return normalize.collection(client.get_json("work_packages", params=params))
+
+
 @click.group("wp", short_help="work packages (tasks): list, get, create, update, delete")
 def wp() -> None:
     """Create, read, update, delete and list work packages (tasks)."""
@@ -88,6 +117,13 @@ def wp() -> None:
 @click.option("--assignee", help="assignee: 'me', a numeric user id, or a full/partial user/group name")
 @click.option("--subject", help="filter by subject substring")
 @click.option("--open", "open_", is_flag=True, help="only open work packages")
+@click.option(
+    "--include-past",
+    "include_past",
+    is_flag=True,
+    help="also include tasks previously assigned to the user (requires --assignee); "
+    "history is accumulated locally",
+)
 @paging_options
 @raw_option
 @common_options()
@@ -100,6 +136,7 @@ def wp_list(
     assignee: str | None,
     subject: str | None,
     open_: bool,
+    include_past: bool,
     offset: int,
     limit: int | None,
     raw: bool,
@@ -121,11 +158,16 @@ def wp_list(
         filters.append({"assignee": {"operator": "=", "values": [client.resolve_principal_id(assignee)]}})
     if subject:
         filters.append({"subject": {"operator": "~", "values": [subject]}})
-    params = paging_params(offset, limit)
-    if filters:
-        params["filters"] = json.dumps(filters)
-    payload = client.get_json("work_packages", params=params)
-    elements = normalize.collection(payload)
+    if include_past:
+        if not assignee:
+            raise click.UsageError("--include-past requires --assignee (e.g. --assignee me).")
+        elements = _list_include_past(client, filters, assignee, offset, limit)
+    else:
+        params = paging_params(offset, limit)
+        if filters:
+            params["filters"] = json.dumps(filters)
+        payload = client.get_json("work_packages", params=params)
+        elements = normalize.collection(payload)
     if raw:
         emit_result(elements, gopts)
         return
