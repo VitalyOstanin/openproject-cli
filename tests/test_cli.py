@@ -501,3 +501,15 @@ def test_wp_list_include_past_requires_assignee(cli_run, router):
     code, out, err = cli_run(["wp", "list", "--include-past"])
     assert code != 0
     assert "assignee" in err.lower()
+
+
+def test_wp_list_without_include_past_never_touches_history(cli_run, router, tmp_path, monkeypatch):
+    state_file = tmp_path / "hist.json"
+    monkeypatch.setenv("OPENPROJECT_STATE", str(state_file))
+    router.add("GET", "/api/v3/users/me", {"id": 7})
+    router.add("GET", "/api/v3/work_packages", _wp_page([_wp(100, "2026-06-30T10:00:00Z")]))
+
+    code, out, err = cli_run(["wp", "list", "--assignee", "me", "--raw"])
+    assert code == 0, err
+    # Ordinary commands neither read nor write the assignee-history file.
+    assert not state_file.exists()
