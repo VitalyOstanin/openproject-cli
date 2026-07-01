@@ -84,6 +84,11 @@ class Client:
             follow_redirects=False,
         )
 
+    @property
+    def base_url(self) -> str:
+        """The configured OpenProject base URL (scheme + host + optional prefix)."""
+        return self._config.base_url
+
     def __enter__(self) -> Client:
         return self
 

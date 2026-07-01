@@ -398,3 +398,9 @@ def test_collect_tolerates_null_embedded():
     router = Router().add("GET", "/api/v3/statuses", {"_embedded": None, "total": None})
     client = make_client(router)
     assert client.collect("statuses") == []
+
+
+def test_base_url_is_exposed():
+    # Exposed for the state-file key in ``wp list --include-past``.
+    client = make_client(Router())
+    assert client.base_url == "https://op.test"
