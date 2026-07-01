@@ -78,6 +78,23 @@ def time_entry(payload: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def notification(payload: dict[str, Any]) -> dict[str, Any]:
+    links = payload.get("_links") or {}
+    resource = links.get("resource") or {}
+    activity = links.get("activity") or {}
+    return {
+        "id": payload.get("id"),
+        "reason": payload.get("reason"),
+        "read": bool(payload.get("readIAN")),
+        "wpId": link_id(payload, "resource"),
+        "wpTitle": resource.get("title"),
+        "project": link_title(payload, "project"),
+        "actor": link_title(payload, "actor"),
+        "activityHref": activity.get("href"),
+        "createdAt": payload.get("createdAt"),
+    }
+
+
 def comment(payload: dict[str, Any]) -> dict[str, Any]:
     return {
         "id": payload.get("id"),

@@ -94,3 +94,32 @@ def test_collection():
     payload = {"_embedded": {"elements": [{"id": 1}, {"id": 2}]}}
     assert normalize.collection(payload) == [{"id": 1}, {"id": 2}]
     assert normalize.collection({}) == []
+
+
+def test_notification_projection():
+    from openproject_cli import normalize
+
+    payload = {
+        "id": 5,
+        "reason": "assigned",
+        "readIAN": False,
+        "createdAt": "2026-06-26T13:14:21Z",
+        "_links": {
+            "resource": {"href": "/openproject/work_packages/14344", "title": "Error"},
+            "project": {"title": "Horizon"},
+            "actor": {"href": "/openproject/api/v3/users/32", "title": "Jane Doe"},
+            "activity": {"href": "/openproject/api/v3/activities/261301"},
+        },
+    }
+    result = normalize.notification(payload)
+    assert result == {
+        "id": 5,
+        "reason": "assigned",
+        "read": False,
+        "wpId": 14344,
+        "wpTitle": "Error",
+        "project": "Horizon",
+        "actor": "Jane Doe",
+        "activityHref": "/openproject/api/v3/activities/261301",
+        "createdAt": "2026-06-26T13:14:21Z",
+    }
