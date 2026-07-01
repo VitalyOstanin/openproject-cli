@@ -79,15 +79,13 @@ def time_entry(payload: dict[str, Any]) -> dict[str, Any]:
 
 
 def notification(payload: dict[str, Any]) -> dict[str, Any]:
-    links = payload.get("_links") or {}
-    resource = links.get("resource") or {}
-    activity = links.get("activity") or {}
+    activity = (payload.get("_links") or {}).get("activity") or {}
     return {
         "id": payload.get("id"),
         "reason": payload.get("reason"),
         "read": bool(payload.get("readIAN")),
         "wpId": link_id(payload, "resource"),
-        "wpTitle": resource.get("title"),
+        "wpTitle": link_title(payload, "resource"),
         "project": link_title(payload, "project"),
         "actor": link_title(payload, "actor"),
         "activityHref": activity.get("href"),

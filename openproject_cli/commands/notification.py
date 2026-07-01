@@ -17,7 +17,7 @@ from openproject_cli.commands._common import (
     resolve_globals,
 )
 
-_JSON_CT = {"Content-Type": "application/json"}
+JSON_CONTENT_TYPE = {"Content-Type": "application/json"}
 
 
 @click.group("notification", short_help="notifications: list, read, unread")
@@ -54,7 +54,7 @@ def notification_read(ctx: click.Context, notification_id: int, **_globals: obje
     """Mark a single notification as read."""
     gopts = resolve_globals(ctx)
     client = runtime.client_from_args(gopts)
-    client.request("POST", f"notifications/{notification_id}/read_ian", headers=_JSON_CT)
+    client.request("POST", f"notifications/{notification_id}/read_ian", headers=JSON_CONTENT_TYPE)
     emit_result({"read": notification_id}, gopts)
 
 
@@ -66,5 +66,5 @@ def notification_unread(ctx: click.Context, notification_id: int, **_globals: ob
     """Mark a single notification as unread."""
     gopts = resolve_globals(ctx)
     client = runtime.client_from_args(gopts)
-    client.request("POST", f"notifications/{notification_id}/unread_ian", headers=_JSON_CT)
+    client.request("POST", f"notifications/{notification_id}/unread_ian", headers=JSON_CONTENT_TYPE)
     emit_result({"unread": notification_id}, gopts)

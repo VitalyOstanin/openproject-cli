@@ -57,12 +57,17 @@ def save_assignee_history(
 ) -> Path:
     """Persist the id set for ``(base_url, uid)``, merging into the existing file."""
     path = path or default_state_path()
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with contextlib.suppress(OSError):
-        os.chmod(path.parent, 0o700)
     data = _read_all(path)
     data[_key(base_url, uid)] = sorted({int(i) for i in ids})
-    path.write_text(json.dumps(data, indent=2, sort_keys=True), encoding="utf-8")
-    with contextlib.suppress(OSError):
-        os.chmod(path, 0o600)
+    # Best-effort: a failure to persist the auxiliary history must never break the
+    # primary command (an unwritable state dir or a full disk should be tolerated).
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with contextlib.suppress(OSError):
+            os.chmod(path.parent, 0o700)
+        path.write_text(json.dumps(data, indent=2, sort_keys=True), encoding="utf-8")
+        with contextlib.suppress(OSError):
+            os.chmod(path, 0o600)
+    except OSError:
+        pass
     return path

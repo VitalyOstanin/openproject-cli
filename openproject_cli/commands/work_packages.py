@@ -72,15 +72,19 @@ def _build_links_and_body(
     return body
 
 
+# Ids per work_packages id-filter request, to keep the query string bounded.
+_ID_FETCH_CHUNK = 100
+
+
 def _list_include_past(
-    client: Client, filters: list[dict[str, Any]], assignee: str, offset: int, limit: int | None
+    client: Client, filters: list[dict[str, Any]], assignee: str, limit: int | None
 ) -> list[dict[str, Any]]:
     """Return current + previously-assigned work packages, newest-updated first."""
     uid = client.resolve_principal_id(assignee)
-    params = paging_params(offset, limit)
-    if filters:
-        params["filters"] = json.dumps(filters)
-    current = normalize.collection(client.get_json("work_packages", params=params))
+    # Record history from EVERY current assignment (all pages), not just the first
+    # page, so a user with many assigned tasks still gets a complete history.
+    current_params = {"filters": json.dumps(filters)} if filters else None
+    current = client.collect("work_packages", params=current_params)
     current_ids = {int(item["id"]) for item in current if item.get("id") is not None}
 
     history = set(state.load_assignee_history(client.base_url, uid))
@@ -90,15 +94,19 @@ def _list_include_past(
     extra = _fetch_by_ids(client, filters, past_only) if past_only else []
     merged = current + extra
     merged.sort(key=lambda item: item.get("updatedAt") or "", reverse=True)
-    return merged
+    return merged[:limit] if limit is not None else merged
 
 
 def _fetch_by_ids(client: Client, filters: list[dict[str, Any]], ids: list[int]) -> list[dict[str, Any]]:
-    """Fetch work packages by id, keeping any non-assignee filters (status/project/open)."""
+    """Fetch work packages by id (chunked and paginated), keeping non-assignee filters."""
     non_assignee = [f for f in filters if "assignee" not in f]
-    id_filter = {"id": {"operator": "=", "values": [str(i) for i in ids]}}
-    params = {"pageSize": str(len(ids)), "filters": json.dumps([id_filter, *non_assignee])}
-    return normalize.collection(client.get_json("work_packages", params=params))
+    results: list[dict[str, Any]] = []
+    for start in range(0, len(ids), _ID_FETCH_CHUNK):
+        chunk = ids[start : start + _ID_FETCH_CHUNK]
+        id_filter = {"id": {"operator": "=", "values": [str(i) for i in chunk]}}
+        params = {"filters": json.dumps([id_filter, *non_assignee])}
+        results.extend(client.collect("work_packages", params=params))
+    return results
 
 
 @click.group("wp", short_help="work packages (tasks): list, get, create, update, delete")
@@ -161,7 +169,7 @@ def wp_list(
     if include_past:
         if not assignee:
             raise click.UsageError("--include-past requires --assignee (e.g. --assignee me).")
-        elements = _list_include_past(client, filters, assignee, offset, limit)
+        elements = _list_include_past(client, filters, assignee, limit)
     else:
         params = paging_params(offset, limit)
         if filters:

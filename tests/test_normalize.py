@@ -123,3 +123,13 @@ def test_notification_projection():
         "activityHref": "/openproject/api/v3/activities/261301",
         "createdAt": "2026-06-26T13:14:21Z",
     }
+
+
+def test_notification_read_flag_and_missing_links():
+    from openproject_cli import normalize
+
+    result = normalize.notification({"id": 1, "readIAN": True})
+    assert result["read"] is True
+    assert result["wpId"] is None
+    assert result["wpTitle"] is None
+    assert result["activityHref"] is None

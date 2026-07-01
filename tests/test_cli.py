@@ -513,3 +513,37 @@ def test_wp_list_without_include_past_never_touches_history(cli_run, router, tmp
     assert code == 0, err
     # Ordinary commands neither read nor write the assignee-history file.
     assert not state_file.exists()
+
+
+def test_notification_unread_posts(cli_run, router):
+    router.add("POST", "/api/v3/notifications/5/unread_ian", None, status=204)
+    code, out, err = cli_run(["notification", "unread", "5"])
+    assert code == 0, err
+    assert router.last().method == "POST"
+    assert router.last().url.path == "/api/v3/notifications/5/unread_ian"
+
+
+def test_wp_list_include_past_respects_limit(cli_run, router, tmp_path, monkeypatch):
+    monkeypatch.setenv("OPENPROJECT_STATE", str(tmp_path / "hist.json"))
+    router.add("GET", "/api/v3/users/me", {"id": 7})
+
+    def work_packages(request):
+        filters = json.loads(dict(request.url.params).get("filters", "[]"))
+        keys = {k for f in filters for k in f}
+        if "assignee" in keys:
+            return json_response(_wp_page([_wp(100, "2026-06-30T10:00:00Z")]))
+        if "id" in keys:
+            return json_response(_wp_page([_wp(50, "2026-07-01T09:00:00Z")]))
+        return json_response(_wp_page([]))
+
+    router.add_handler("GET", "/api/v3/work_packages", work_packages)
+
+    from openproject_cli import state
+
+    state.save_assignee_history("https://op.test", 7, [50])
+
+    code, out, err = cli_run(["wp", "list", "--assignee", "me", "--include-past", "--limit", "1", "--raw"])
+    assert code == 0, err
+    data = json.loads(out)
+    # Newest-updated first, truncated to the limit across the merged result.
+    assert [item["id"] for item in data] == [50]
