@@ -6,6 +6,13 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+
+- The publish workflow's release job restores the repository checkout that
+  `gh release create` needs (its removal in 0.2.0 made the GitHub Release step
+  fail; the PyPI upload was unaffected). The 0.2.0 GitHub Release was created
+  out of band.
+
 ## [0.2.0] - 2026-07-01
 
 ### Added
