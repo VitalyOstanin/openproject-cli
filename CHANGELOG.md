@@ -6,6 +6,16 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- `wp query <id>` runs a saved OpenProject query and lists its work packages
+  (like `wp list`), wrapping `GET /api/v3/queries/{id}` and emitting its embedded
+  results; `--offset`/`--limit` page the results, `--raw` returns them unnormalized.
+- `--assignee` / `time --user` name resolution accepts a partial name: an exact
+  full-name match still wins, but otherwise every whitespace-separated token must
+  occur in the name (so `"Ann Lee"` resolves `"Ann Marie Lee"`). Multiple matches
+  now raise listing the candidates (`id: name`) instead of failing opaquely.
+
 ### Security
 
 - The client no longer follows HTTP redirects. The API v3 does not redirect, and

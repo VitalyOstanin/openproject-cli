@@ -68,17 +68,14 @@ Detailed per-area reports live in the gitignored `docs/reviews/` directory.
   --cov-fail-under=75` (current coverage ~79%).
 - [x] **[setuptools floor]** Bumped `build-system requires` to `setuptools>=77`
   for the PEP 639 string `license` form.
-- [ ] **[assignee/principal name resolution]** `--assignee`/`--user` by name needs
-  an *exact* match against the principal's full name; a partial name (e.g. "Вадим
-  Потапушин" vs the stored "Вадим Сергеевич Потапушин") is not found and forces
-  passing a numeric id. Improve `resolve_principal_id` to match on a substring and,
-  on multiple hits, list the candidates (id + full name) so the user can
-  disambiguate, instead of failing outright.
-- [ ] **[saved query command]** Add a convenience command for OpenProject saved
-  queries, e.g. `openproject-cli wp query <id>`, wrapping `GET /api/v3/queries/{id}`
-  and emitting the executed results (`_embedded.results._embedded.elements`) through
-  the same normalization as `wp list`. Today this needs the raw `api GET
-  queries/{id}` passthrough plus manual extraction.
+- [x] **[assignee/principal name resolution]** Done: `resolve_principal_id` now
+  probes the server with the longest token and narrows client-side to principals
+  whose name contains *every* whitespace-separated token (so "Ann Lee" matches
+  "Ann Marie Lee"); an exact full-name match wins, and multiple matches raise with
+  the candidates listed (`id: name`).
+- [x] **[saved query command]** Done: `wp query <id>` wraps `GET
+  /api/v3/queries/{id}` and emits `_embedded.results._embedded.elements` through the
+  same normalization as `wp list` (`--offset`/`--limit` page, `--raw` unnormalized).
 
 ## Documentation
 

@@ -122,11 +122,23 @@ where `GLOBAL OPTIONS` are `--url URL`, `--token TOKEN`, `--config PATH`,
 ```sh
 openproject-cli wp list --assignee me --open
 openproject-cli wp list --project my-project --status "In progress"
+openproject-cli wp query 532                                    # run a saved query by id
 openproject-cli wp get 1234
 openproject-cli wp create --project my-project --type Task --subject "Fix X"
 openproject-cli wp update 1234 --status "In progress" --done-ratio 50
 openproject-cli wp delete 1234
 ```
+
+`--assignee` (and `time --user`) accept `me`, a numeric id, or a name. A name is
+matched case-insensitively: an exact full-name match wins, otherwise every
+whitespace-separated token must occur in the name (so `"Ann Lee"` matches
+`"Ann Marie Lee"`). Multiple matches list the candidates (`id: name`) so you can
+retry with a more specific name or the id.
+
+`wp query <id>` runs a saved OpenProject query (the one identified by
+`query_id` in the query's URL) and lists its work packages like `wp list`;
+`--offset`/`--limit` page the results. Use `api GET queries/<id>` for the full
+query definition.
 
 ### Comments
 

@@ -61,7 +61,7 @@ def time_group() -> None:
     short_help="list time entries with server-side filters",
     epilog="Example: openproject-cli time list --user me --since 2026-06-22",
 )
-@click.option("--user", help="user: 'me', a numeric user id, or an exact user name")
+@click.option("--user", help="user: 'me', a numeric user id, or a full/partial user name")
 @click.option("--project", help="project id or identifier")
 @click.option("--work-package", "work_package", type=int, help="work package id")
 @click.option("--since", help="earliest spentOn date, inclusive (YYYY-MM-DD)")

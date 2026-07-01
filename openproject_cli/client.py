@@ -399,27 +399,44 @@ class Client:
         return names
 
     def resolve_principal_id(self, ref: str) -> str:
-        """Resolve ``me`` / a numeric id / an exact principal name to a user id.
+        """Resolve ``me`` / a numeric id / a principal name to a user id.
 
-        Mirrors the assignee/user resolution used by the MCP server: ``me`` maps
-        to the authenticated user, a digit string is taken as an id verbatim,
-        and anything else is matched case-insensitively against principal names
-        via ``/principals?filters=...`` — erroring on no match or ambiguity.
+        ``me`` maps to the authenticated user and a digit string is taken as an
+        id verbatim. Otherwise the name is matched against principals:
+
+        * the server ``~`` filter is a substring match on the whole name and
+          cannot span the gaps of a multi-word partial (``"Ann Lee"`` does not
+          occur in ``"Ann Marie Lee"``), so the query probes with the longest
+          single token and the result is narrowed client-side to principals
+          whose name contains *every* token of ``ref``;
+        * an exact (case-insensitive) full-name match wins outright;
+        * a sole partial match is used; multiple matches raise with the
+          candidates listed (``id: name``) so the caller can disambiguate.
         """
         ref = ref.strip()
         if ref.casefold() == "me":
             return str(self.current_user()["id"])
         if ref.isdigit():
             return ref
-        filters = json.dumps([{"name": {"operator": "~", "values": [ref]}}])
+        tokens = ref.casefold().split()
+        if not tokens:
+            raise ApiError(404, "Principal '' was not found. Pass a numeric user id or 'me'.")
+        probe = max(tokens, key=len)
+        filters = json.dumps([{"name": {"operator": "~", "values": [probe]}}])
         elements = self.collect("principals", params={"filters": filters})
-        matches = [
-            str(item["id"]) for item in elements if (item.get("name") or "").casefold() == ref.casefold()
+        ref_cf = ref.casefold()
+        exact = [item for item in elements if (item.get("name") or "").casefold() == ref_cf]
+        candidates = exact or [
+            item for item in elements if all(tok in (item.get("name") or "").casefold() for tok in tokens)
         ]
-        return single_match(
-            matches,
-            not_found=f"Principal {ref!r} was not found. Pass a numeric user id or 'me'.",
-            ambiguous=f"Principal {ref!r} is ambiguous ({len(matches)} matches). Pass a numeric id.",
+        if len(candidates) == 1:
+            return str(candidates[0]["id"])
+        if not candidates:
+            raise ApiError(404, f"Principal {ref!r} was not found. Pass a numeric user id or 'me'.")
+        listing = "; ".join(f"{item.get('id')}: {item.get('name')}" for item in candidates)
+        raise ApiError(
+            400,
+            f"Principal {ref!r} is ambiguous ({len(candidates)} matches): {listing}. Pass a numeric user id.",
         )
 
 

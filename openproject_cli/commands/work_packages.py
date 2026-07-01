@@ -85,7 +85,7 @@ def wp() -> None:
 @click.option("--project", help="project id or identifier")
 @click.option("--status", help="status name or id")
 @click.option("--type", "type_", help="type name or id (e.g. Task, Bug)")
-@click.option("--assignee", help="assignee: 'me', a numeric user id, or an exact user/group name")
+@click.option("--assignee", help="assignee: 'me', a numeric user id, or a full/partial user/group name")
 @click.option("--subject", help="filter by subject substring")
 @click.option("--open", "open_", is_flag=True, help="only open work packages")
 @paging_options
@@ -132,6 +132,42 @@ def wp_list(
     emit_result([_with_custom_fields(client, item) for item in elements], gopts)
 
 
+@wp.command(
+    "query",
+    short_help="run a saved query by id and list its work packages",
+    epilog="Example: openproject-cli wp query 532",
+)
+@click.argument("query_id", type=int, metavar="ID")
+@paging_options
+@raw_option
+@common_options()
+@click.pass_context
+def wp_query(
+    ctx: click.Context,
+    query_id: int,
+    offset: int,
+    limit: int | None,
+    raw: bool,
+    **_globals: object,
+) -> None:
+    """Run a saved OpenProject query and list its work packages.
+
+    Fetches ``GET /api/v3/queries/{id}`` (which embeds the executed results) and
+    emits the work packages exactly like ``wp list``. ``--offset``/``--limit``
+    page the results, overriding the query's own pagination. Use ``api GET
+    queries/{id}`` for the full query definition (filters, columns, sort).
+    """
+    gopts = resolve_globals(ctx)
+    client = runtime.client_from_args(gopts)
+    payload = client.get_json(f"queries/{query_id}", params=paging_params(offset, limit))
+    results = (payload.get("_embedded") or {}).get("results") or {}
+    elements = normalize.collection(results)
+    if raw:
+        emit_result(elements, gopts)
+        return
+    emit_result([_with_custom_fields(client, item) for item in elements], gopts)
+
+
 @wp.command("get", short_help="show a single work package")
 @click.argument("wp_id", type=int, metavar="ID")
 @raw_option
@@ -155,7 +191,7 @@ def wp_get(ctx: click.Context, wp_id: int, raw: bool, **_globals: object) -> Non
 @click.option("--subject", required=True, help="work package subject")
 @click.option("--description", help="description (plain text / Markdown)")
 @click.option("--status", help="initial status name or id")
-@click.option("--assignee", help="assignee: 'me', a user id, or an exact name")
+@click.option("--assignee", help="assignee: 'me', a user id, or a full/partial name")
 @click.option("--parent", type=int, help="parent work package id")
 @click.option("--start-date", "start_date", help="start date (YYYY-MM-DD)")
 @click.option("--due-date", "due_date", help="due date (YYYY-MM-DD)")
@@ -209,7 +245,7 @@ def wp_create(
 @click.option("--description", help="new description")
 @click.option("--status", help="new status name or id")
 @click.option("--type", "type_", help="new type name or id")
-@click.option("--assignee", help="new assignee: 'me', a user id, or an exact name")
+@click.option("--assignee", help="new assignee: 'me', a user id, or a full/partial name")
 @click.option("--parent", type=int, help="new parent work package id")
 @click.option("--start-date", "start_date", help="start date (YYYY-MM-DD)")
 @click.option("--due-date", "due_date", help="due date (YYYY-MM-DD)")

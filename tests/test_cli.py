@@ -26,6 +26,32 @@ def test_wp_list_sends_server_side_filters(cli_run, router):
     assert json.loads(out)[0]["id"] == 1234
 
 
+def test_wp_query_runs_saved_query(cli_run, router):
+    query_payload = {
+        "id": 532,
+        "_embedded": {
+            "results": {"_embedded": {"elements": [{"id": 1234, "subject": "Sample", "_links": {}}]}}
+        },
+    }
+    router.add("GET", "/api/v3/queries/532", query_payload)
+    code, out, _ = cli_run(["wp", "query", "532"])
+    assert code == 0
+    data = json.loads(out)
+    assert data[0]["id"] == 1234
+    assert data[0]["subject"] == "Sample"
+    assert "customFields" in data[0]
+
+
+def test_wp_query_raw_returns_result_elements(cli_run, router):
+    query_payload = {
+        "_embedded": {"results": {"_embedded": {"elements": [{"id": 1, "_links": {"self": {"href": "/x"}}}]}}}
+    }
+    router.add("GET", "/api/v3/queries/532", query_payload)
+    code, out, _ = cli_run(["wp", "query", "532", "--raw"])
+    assert code == 0
+    assert json.loads(out)[0]["_links"]["self"]["href"] == "/x"
+
+
 def test_wp_get(cli_run, router):
     router.add("GET", "/api/v3/work_packages/1234", {"id": 1234, "subject": "Sample", "_links": {}})
     code, out, _ = cli_run(["wp", "get", "1234"])

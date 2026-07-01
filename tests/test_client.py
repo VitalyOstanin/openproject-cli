@@ -106,6 +106,40 @@ def test_resolve_principal_ambiguous():
         client.resolve_principal_id("same")
 
 
+def test_resolve_principal_partial_name_skips_middle_token():
+    # "Ann Lee" must resolve to "Ann Marie Lee": the tokens all occur in the
+    # full name even though it is not a contiguous substring.
+    router = Router().add(
+        "GET", "/api/v3/principals", {"_embedded": {"elements": [{"id": 54, "name": "Ann Marie Lee"}]}}
+    )
+    client = make_client(router)
+    assert client.resolve_principal_id("Ann Lee") == "54"
+
+
+def test_resolve_principal_ambiguous_lists_candidates():
+    router = Router().add(
+        "GET",
+        "/api/v3/principals",
+        {"_embedded": {"elements": [{"id": 1, "name": "Ann Lee"}, {"id": 2, "name": "Ann Ross"}]}},
+    )
+    client = make_client(router)
+    with pytest.raises(ApiError) as excinfo:
+        client.resolve_principal_id("Ann")
+    message = str(excinfo.value)
+    assert "1: Ann Lee" in message and "2: Ann Ross" in message
+
+
+def test_resolve_principal_exact_name_wins_over_partial():
+    # An exact full-name match is chosen even when another name also contains it.
+    router = Router().add(
+        "GET",
+        "/api/v3/principals",
+        {"_embedded": {"elements": [{"id": 1, "name": "Ann Lee"}, {"id": 2, "name": "Ann Lee Junior"}]}},
+    )
+    client = make_client(router)
+    assert client.resolve_principal_id("Ann Lee") == "1"
+
+
 def test_stream_download_writes_chunks():
     payload = b"binary-content-" * 1000
     router = Router().add_handler(
